@@ -1,0 +1,142 @@
+version: 2
+
+models:
+  - name: time_spine
+    description: 覆盖 2020 至 2027 年每一天的时间骨架。
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: 连续自然日，供 MetricFlow 时间粒度计算。
+        granularity: day
+        data_tests: [not_null, unique]
+
+  - name: dim_users
+    description: 从用户原表构建的可关联用户维表。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: user_id
+        description: 用户主实体，与订单事实的用户外键关联。
+        entity: {name: user, type: primary}
+        data_tests: [not_null, unique]
+      - name: registered_at
+        description: 用户注册日期。
+        granularity: day
+        dimension: {type: time}
+      - name: region
+        description: 用户所在地区。
+        dimension: {type: categorical}
+      - name: membership_tier
+        description: 用户会员等级。
+        dimension: {type: categorical}
+      - name: acquisition_channel
+        description: 用户获客渠道。
+        dimension: {type: categorical}
+
+  - name: dim_products
+    description: 从商品原表构建的可关联商品维表。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: product_id
+        description: 商品主实体，与订单明细的商品外键关联。
+        entity: {name: product, type: primary}
+        data_tests: [not_null, unique]
+      - name: category
+        description: 商品类目。
+        dimension: {type: categorical}
+      - name: brand
+        description: 商品品牌。
+        dimension: {type: categorical}
+
+  - name: dim_shops
+    description: 从店铺原表构建的可关联店铺维表。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: shop_id
+        description: 店铺主实体，与订单事实的店铺外键关联。
+        entity: {name: shop, type: primary}
+        data_tests: [not_null, unique]
+      - name: region
+        description: 店铺所在地区。
+        dimension: {type: categorical}
+      - name: shop_type
+        description: 店铺经营类型。
+        dimension: {type: categorical}
+
+  - name: fct_order_items
+    description: 订单商品明细事实，按订单状态区分成交和退款金额。
+    semantic_model:
+      enabled: true
+    agg_time_dimension: ordered_at
+    columns:
+      - name: order_item_id
+        description: 明细主实体，每笔订单包含两条明细。
+        entity: {name: order_item, type: primary}
+        data_tests: [not_null, unique]
+      - name: order_id
+        description: 所属订单标识，供订单去重。
+        entity: {name: order, type: foreign}
+      - name: user_id
+        description: 关联用户维表的外键。
+        entity: {name: user, type: foreign}
+      - name: product_id
+        description: 关联商品维表的外键。
+        entity: {name: product, type: foreign}
+      - name: shop_id
+        description: 关联店铺维表的外键。
+        entity: {name: shop, type: foreign}
+      - name: ordered_at
+        description: 下单日期，也是指标默认聚合时间。
+        granularity: day
+        dimension: {type: time}
+      - name: order_status
+        description: 订单状态，取值为 PAID、CANCELLED 或 REFUNDED。
+        dimension: {type: categorical}
+      - name: sales_channel
+        description: 订单销售渠道。
+        dimension: {type: categorical}
+      - name: gross_amount
+        description: 明细折后金额，包含取消和退款订单。
+      - name: revenue
+        description: 仅已支付订单的明细成交金额。
+      - name: refund_amount
+        description: 仅退款订单的明细退款金额。
+      - name: paid_order_id
+        description: 仅已支付订单保留订单 ID，供精确去重。
+    metrics:
+      - name: revenue
+        description: 已支付订单成交金额。
+        type: simple
+        agg: sum
+        expr: revenue
+      - name: gross_amount
+        description: 所有订单明细折后总额。
+        type: simple
+        agg: sum
+        expr: gross_amount
+      - name: refund_amount
+        description: 已退款订单的退款总额。
+        type: simple
+        agg: sum
+        expr: refund_amount
+      - name: units_sold
+        description: 已支付订单售出件数。
+        type: simple
+        agg: sum
+        expr: case when order_status = 'PAID' then quantity else 0 end
+      - name: order_count
+        description: 已支付订单的去重订单数。
+        type: simple
+        agg: count_distinct
+        expr: paid_order_id
+
+metrics:
+  - name: average_order_value
+    description: 平均已支付订单金额，成交金额除以去重订单数。
+    type: ratio
+    type_params:
+      numerator: revenue
+      denominator: order_count

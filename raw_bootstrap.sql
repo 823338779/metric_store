@@ -1,88 +1,65 @@
--- 此脚本直接在 StarRocks 中创建独立原表；dbt 只通过 source() 读取，不管理这些表。
--- 首次执行前确认 ecommerce_raw 数据库未被其他业务使用；重复执行不会覆盖已有表。
+-- 仅创建 StarRocks 模拟原表结构；数据由 generate_raw_data.py 生成并写入。
 create database if not exists ecommerce_raw;
 
--- 用户、商品、店铺均为固定规则的虚构维度数据。
-create table if not exists ecommerce_raw.users as
-select
-    cast(n as int) as user_id,
-    cast(date_add(cast('2018-01-01' as date), interval mod(n * 17, 730) day) as date) as registered_at,
-    case mod(n, 5) when 0 then 'East' when 1 then 'North' when 2 then 'South'
-         when 3 then 'West' else 'Central' end as region,
-    case mod(n, 3) when 0 then 'Bronze' when 1 then 'Silver' else 'Gold' end as membership_tier,
-    case mod(n, 4) when 0 then 'Organic' when 1 then 'Search'
-         when 2 then 'Social' else 'Referral' end as acquisition_channel
-from table(generate_series(1, 1200)) as t(n);
+-- 用户、商品、店铺为缓慢增长的业务实体，日期字段记录首次可用时间。
+create table if not exists ecommerce_raw.users (
+    user_id int not null comment '用户唯一标识',
+    registered_at date not null comment '用户注册日期',
+    region varchar(32) not null comment '用户所在地区',
+    membership_tier varchar(32) not null comment '会员等级',
+    acquisition_channel varchar(32) not null comment '获客渠道'
+) duplicate key(user_id) distributed by hash(user_id) buckets 4 properties ('replication_num'='1');
 
-create table if not exists ecommerce_raw.products as
-select
-    cast(n as int) as product_id,
-    concat('SKU-', lpad(cast(n as varchar), 4, '0')) as sku,
-    case mod(n, 5) when 0 then 'Electronics' when 1 then 'Home' when 2 then 'Food'
-         when 3 then 'Fashion' else 'Beauty' end as category,
-    case mod(n, 4) when 0 then 'Aurora' when 1 then 'Cedar'
-         when 2 then 'Harbor' else 'Summit' end as brand,
-    cast(19 + n * 3.25 as decimal(18, 2)) as list_price
-from table(generate_series(1, 40)) as t(n);
+create table if not exists ecommerce_raw.products (
+    product_id int not null comment '商品唯一标识',
+    sku varchar(32) not null comment '商品库存单位编码',
+    category varchar(32) not null comment '商品类目',
+    brand varchar(32) not null comment '商品品牌',
+    list_price decimal(18, 2) not null comment '商品标价',
+    listed_at date not null comment '商品首次上架日期'
+) duplicate key(product_id) distributed by hash(product_id) buckets 4 properties ('replication_num'='1');
 
-create table if not exists ecommerce_raw.shops as
-select
-    cast(n as int) as shop_id,
-    concat('Shop ', lpad(cast(n as varchar), 2, '0')) as shop_name,
-    case mod(n, 5) when 0 then 'East' when 1 then 'North' when 2 then 'South'
-         when 3 then 'West' else 'Central' end as region,
-    case when mod(n, 3) = 0 then 'Flagship' else 'Marketplace' end as shop_type
-from table(generate_series(1, 8)) as t(n);
+create table if not exists ecommerce_raw.shops (
+    shop_id int not null comment '店铺唯一标识',
+    shop_name varchar(32) not null comment '店铺展示名称',
+    region varchar(32) not null comment '店铺所在地区',
+    shop_type varchar(32) not null comment '店铺经营类型',
+    opened_at date not null comment '店铺开业日期'
+) duplicate key(shop_id) distributed by hash(shop_id) buckets 4 properties ('replication_num'='1');
 
--- 每个自然日生成 24 笔订单，日期区间包含首尾两日。
-create table if not exists ecommerce_raw.orders as
-select
-    cast(d.day_index * 100 + s.order_slot as bigint) as order_id,
-    cast(date_add(cast('2020-01-01' as date), interval d.day_index day) as date) as ordered_at,
-    cast(mod((d.day_index + 1) * 7 + s.order_slot * 11, 1200) + 1 as int) as user_id,
-    cast(mod(d.day_index + 1 + s.order_slot, 8) + 1 as int) as shop_id,
-    case when mod(d.day_index + 1 + s.order_slot, 20) = 0 then 'REFUNDED'
-         when mod(d.day_index + 1 + s.order_slot, 10) = 0 then 'CANCELLED'
-         else 'PAID' end as order_status,
-    case mod(s.order_slot, 3) when 0 then 'App' when 1 then 'Web' else 'MiniProgram' end as sales_channel,
-    case when mod(s.order_slot, 7) = 0 then cast(0.10 as decimal(5, 2))
-         else cast(0 as decimal(5, 2)) end as discount_rate
-from table(generate_series(0, 2921)) as d(day_index)
-cross join table(generate_series(1, 24)) as s(order_slot);
+-- 交易原表保留业务状态、渠道、金额及完整关联键。
+create table if not exists ecommerce_raw.orders (
+    order_id bigint not null comment '订单唯一标识',
+    ordered_at date not null comment '下单日期',
+    user_id int not null comment '下单用户标识',
+    shop_id int not null comment '成交店铺标识',
+    order_status varchar(32) not null comment '订单状态',
+    sales_channel varchar(32) not null comment '销售渠道',
+    discount_rate decimal(5, 2) not null comment '订单折扣比例'
+) duplicate key(order_id) distributed by hash(order_id) buckets 8 properties ('replication_num'='1');
 
--- 订单商品明细和支付、退款流水直接由 StarRocks 中的原表生成。
-create table if not exists ecommerce_raw.order_items as
-select
-    cast(o.order_id * 10 + i.item_slot as bigint) as order_item_id,
-    o.order_id,
-    p.product_id,
-    cast(mod(o.order_id + i.item_slot, 3) + 1 as int) as quantity,
-    p.list_price as unit_price,
-    o.discount_rate
-from ecommerce_raw.orders o
-cross join table(generate_series(1, 2)) as i(item_slot)
-join ecommerce_raw.products p
-  on p.product_id = cast(mod(o.order_id + i.item_slot * 13, 40) + 1 as int);
+create table if not exists ecommerce_raw.order_items (
+    order_item_id bigint not null comment '订单明细唯一标识',
+    order_id bigint not null comment '所属订单标识',
+    product_id int not null comment '所购商品标识',
+    quantity int not null comment '购买件数',
+    unit_price decimal(18, 2) not null comment '成交时商品单价',
+    discount_rate decimal(5, 2) not null comment '订单折扣比例'
+) duplicate key(order_item_id) distributed by hash(order_item_id) buckets 8 properties ('replication_num'='1');
 
-create table if not exists ecommerce_raw.payments as
-select
-    o.order_id as payment_id,
-    o.order_id,
-    o.ordered_at as paid_at,
-    cast(sum(i.quantity * i.unit_price * (1 - i.discount_rate)) as decimal(18, 2)) as paid_amount,
-    case when o.order_status = 'REFUNDED' then 'REFUNDED' else 'SETTLED' end as payment_status,
-    case mod(o.order_id, 3) when 0 then 'Card' when 1 then 'Wallet' else 'Bank' end as payment_method
-from ecommerce_raw.orders o
-join ecommerce_raw.order_items i on i.order_id = o.order_id
-where o.order_status <> 'CANCELLED'
-group by o.order_id, o.ordered_at, o.order_status;
+create table if not exists ecommerce_raw.payments (
+    payment_id bigint not null comment '支付流水唯一标识',
+    order_id bigint not null comment '所属订单标识',
+    paid_at date not null comment '支付日期',
+    paid_amount decimal(18, 2) not null comment '支付金额',
+    payment_status varchar(32) not null comment '支付状态',
+    payment_method varchar(32) not null comment '支付方式'
+) duplicate key(payment_id) distributed by hash(payment_id) buckets 8 properties ('replication_num'='1');
 
-create table if not exists ecommerce_raw.refunds as
-select
-    p.payment_id as refund_id,
-    p.order_id,
-    p.paid_at as refunded_at,
-    p.paid_amount as refund_amount,
-    case mod(p.order_id, 2) when 0 then 'CustomerRequest' else 'OutOfStock' end as refund_reason
-from ecommerce_raw.payments p
-where p.payment_status = 'REFUNDED';
+create table if not exists ecommerce_raw.refunds (
+    refund_id bigint not null comment '退款流水唯一标识',
+    order_id bigint not null comment '所属订单标识',
+    refunded_at date not null comment '退款日期',
+    refund_amount decimal(18, 2) not null comment '退款金额',
+    refund_reason varchar(32) not null comment '退款原因'
+) duplicate key(refund_id) distributed by hash(refund_id) buckets 4 properties ('replication_num'='1');

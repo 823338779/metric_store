@@ -67,13 +67,13 @@ models:
         dimension: {type: categorical}
 
   - name: fct_order_items
-    description: 订单商品明细事实，按订单状态区分成交和退款金额。
+    description: 订单商品明细事实，每单明细数浮动，按订单状态区分成交和退款金额。
     semantic_model:
       enabled: true
     agg_time_dimension: ordered_at
     columns:
       - name: order_item_id
-        description: 明细主实体，每笔订单包含两条明细。
+        description: 明细主实体，每笔订单包含一至四条明细。
         entity: {name: order_item, type: primary}
         data_tests: [not_null, unique]
       - name: order_id

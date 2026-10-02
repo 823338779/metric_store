@@ -13,6 +13,8 @@ from pathlib import Path
 
 import mysql.connector
 
+
+
 DATABASE = "ecommerce_raw"
 STAGE_SUFFIX = "__python_stage"
 START_DAY = date(2020, 1, 1)

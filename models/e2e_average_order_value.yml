@@ -2,7 +2,7 @@ version: 2
 
 metrics:
   - name: e2e_average_order_value
-    description: 端到端验收客单价：已支付成交额除以已支付去重订单数。
+    description: 端到端验收客单价：已支付成交额除以已支付去重订单数，单位元/单。
     type: ratio
     type_params:
       numerator: revenue

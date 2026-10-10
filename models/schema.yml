@@ -5,16 +5,61 @@ models:
     columns:
       - name: user_id
         data_tests: [unique, not_null]
+        entity:
+          type: primary
+          name: user
+      - name: registered_date
+        dimension:
+          type: time
+        granularity: day
+      - name: province
+        dimension:
+          type: categorical
+      - name: membership_tier
+        dimension:
+          type: categorical
+      - name: acquisition_channel
+        dimension:
+          type: categorical
+    semantic_model:
+      enabled: true
+      name: users_semantic
+    agg_time_dimension: registered_date
+    metrics:
+      - name: new_users
+        label: 新增用户数
+        description: 按注册日期统计的新增用户数
+        type: simple
+        agg: sum
+        expr: 1
   - name: dim_shops
     description: "店铺表，30 家模拟店铺"
     columns:
       - name: shop_id
         data_tests: [unique, not_null]
+        entity:
+          type: primary
+          name: shop
+      - name: shop_name
+        dimension:
+          type: categorical
+      - name: shop_type
+        dimension:
+          type: categorical
+      - name: province
+        dimension:
+          type: categorical
+    semantic_model:
+      enabled: true
+      name: shops_semantic
   - name: dim_products
     description: "商品表，每家店铺 10 个 SKU"
     columns:
       - name: product_id
         data_tests: [unique, not_null]
+        entity:
+          type: primary
+          name: product
       - name: shop_id
         data_tests:
           - not_null
@@ -22,13 +67,37 @@ models:
               arguments:
                 to: ref('dim_shops')
                 field: shop_id
+        entity:
+          type: foreign
+          name: shop
+      - name: product_name
+        dimension:
+          type: categorical
+      - name: sku
+        dimension:
+          type: categorical
+      - name: category_name
+        dimension:
+          type: categorical
+      - name: brand_name
+        dimension:
+          type: categorical
+    semantic_model:
+      enabled: true
+      name: products_semantic
   - name: fct_orders
-    description: "订单表，含支付退款字段；一单一个店铺"
+    description: "订单表，含支付退款字段；一单一个店铺 orders 电商交易语义"
     columns:
       - name: order_id
         data_tests: [unique, not_null]
+        entity:
+          type: primary
+          name: order
       - name: order_date
         data_tests: [not_null, daily_coverage]
+        dimension:
+          type: time
+        granularity: day
       - name: user_id
         data_tests:
           - not_null
@@ -36,6 +105,9 @@ models:
               arguments:
                 to: ref('dim_users')
                 field: user_id
+        entity:
+          type: foreign
+          name: user
       - name: shop_id
         data_tests:
           - not_null
@@ -43,18 +115,121 @@ models:
               arguments:
                 to: ref('dim_shops')
                 field: shop_id
+        entity:
+          type: foreign
+          name: shop
       - name: order_status
         data_tests:
           - accepted_values:
               arguments:
                 values: ['completed', 'cancelled', 'refunded', 'partially_refunded']
+        dimension:
+          type: categorical
+      - name: device_type
+        dimension:
+          type: categorical
+      - name: channel
+        dimension:
+          type: categorical
+      - name: payment_method
+        dimension:
+          type: categorical
+    semantic_model:
+      enabled: true
+      name: orders_semantic
+    agg_time_dimension: order_date
+    metrics:
+      - name: total_orders
+        label: "下单数"
+        description: "下单数"
+        type: simple
+        agg: sum
+        expr: "order_count"
+      - name: paid_orders
+        label: "支付订单数"
+        description: "支付订单数"
+        type: simple
+        agg: sum
+        expr: "paid_order_count"
+      - name: cancelled_orders
+        label: "取消订单数"
+        description: "取消订单数"
+        type: simple
+        agg: sum
+        expr: "cancelled_order_count"
+      - name: refunded_orders
+        label: "退款订单数"
+        description: "退款订单数"
+        type: simple
+        agg: sum
+        expr: "refunded_order_count"
+      - name: gross_order_value
+        label: "下单原价金额，含取消"
+        description: "下单原价金额，含取消"
+        type: simple
+        agg: sum
+        expr: "gross_amount"
+      - name: ordered_amount
+        label: "下单折后金额，含取消"
+        description: "下单折后金额，含取消"
+        type: simple
+        agg: sum
+        expr: "order_amount"
+      - name: order_discounts
+        label: "下单优惠金额，含取消"
+        description: "下单优惠金额，含取消"
+        type: simple
+        agg: sum
+        expr: "discount_amount"
+      - name: paid_revenue
+        label: "支付金额，退款前"
+        description: "支付金额，退款前"
+        type: simple
+        agg: sum
+        expr: "paid_amount"
+      - name: refund_amount
+        label: "退款金额"
+        description: "退款金额"
+        type: simple
+        agg: sum
+        expr: "refund_amount"
+      - name: net_revenue
+        label: "支付减退款"
+        description: "支付减退款"
+        type: simple
+        agg: sum
+        expr: "net_revenue"
+      - name: fulfilled_cost
+        label: "已履约商品成本，退款不冲回"
+        description: "已履约商品成本，退款不冲回"
+        type: simple
+        agg: sum
+        expr: "fulfilled_cost"
+      - name: gross_profit
+        label: "净收入减履约商品成本"
+        description: "净收入减履约商品成本"
+        type: simple
+        agg: sum
+        expr: "gross_profit"
+      - name: paying_users
+        label: "去重支付用户数"
+        description: "去重支付用户数"
+        type: simple
+        agg: count_distinct
+        expr: "case when paid_order_count = 1 then user_id end"
   - name: fct_order_items
-    description: "订单明细表，每单 1—4 条不重复商品行"
+    description: "订单明细表，每单 1—4 条不重复商品行 order_items 电商交易语义"
     columns:
       - name: order_item_id
         data_tests: [unique, not_null]
+        entity:
+          type: primary
+          name: order_item
       - name: order_date
         data_tests: [not_null, daily_coverage]
+        dimension:
+          type: time
+        granularity: day
       - name: order_id
         data_tests:
           - not_null
@@ -62,6 +237,9 @@ models:
               arguments:
                 to: ref('fct_orders')
                 field: order_id
+        entity:
+          type: foreign
+          name: order
       - name: product_id
         data_tests:
           - not_null
@@ -69,6 +247,43 @@ models:
               arguments:
                 to: ref('dim_products')
                 field: product_id
+        entity:
+          type: foreign
+          name: product
+      - name: user_id
+        entity:
+          type: foreign
+          name: user
+      - name: shop_id
+        entity:
+          type: foreign
+          name: shop
+      - name: order_status
+        dimension:
+          type: categorical
+    semantic_model:
+      enabled: true
+      name: order_items_semantic
+    agg_time_dimension: order_date
+    metrics:
+      - name: ordered_units
+        label: "下单件数，含取消"
+        description: "下单件数，含取消"
+        type: simple
+        agg: sum
+        expr: "quantity"
+      - name: paid_units
+        label: "已支付件数，退货前"
+        description: "已支付件数，退货前"
+        type: simple
+        agg: sum
+        expr: "paid_quantity"
+      - name: paid_item_revenue
+        label: "商品支付金额，退款前"
+        description: "商品支付金额，退款前"
+        type: simple
+        agg: sum
+        expr: "paid_item_amount"
   - name: dim_date
     description: 2020—2027 完整日历，包含闰日和 ISO 周年
     columns:

@@ -1,6 +1,6 @@
 # 电商 dbt 数据模型
 
-dbt Core 1.11 项目，支持本地 DuckDB 和 Databricks，仅 **5 张核心业务源表**，覆盖 **2020-01-01 至 2027-12-31 全部 2,922 天**（包含两个闰日）。每天随机 100—300 笔订单，每单 1—4 条明细；每天注册 20 个用户。固定种子和锁定依赖保证分批与一次生成结果相同。全部为合成数据，金额 CNY，时间为无时区的本地业务时间，未来日期不代表预测。
+dbt Core 1.12 项目，语义层采用兼容 dbt v2 的新版 YAML，支持本地 DuckDB 和 Databricks，仅 **5 张核心业务源表**，覆盖 **2020-01-01 至 2027-12-31 全部 2,922 天**（包含两个闰日）。每天随机 100—300 笔订单，每单 1—4 条明细；每天注册 20 个用户。固定种子和锁定依赖保证分批与一次生成结果相同。全部为合成数据，金额 CNY，时间为无时区的本地业务时间，未来日期不代表预测。
 
 ## 五张核心表
 
@@ -22,11 +22,14 @@ dbt Core 1.11 项目，支持本地 DuckDB 和 Databricks，仅 **5 张核心业
 | `models/dimensions` | 用户、店铺、商品、日期 4 个维度 |
 | `models/facts` | 订单、订单明细 2 个增量事实表 |
 | `models/marts` | 全站日销售、店铺日销售、商品日销售、用户累计交易 4 个汇总表 |
-| `models/semantic` | 日时间脊柱，5 个语义模型、24 个指标 |
+| `models/schema.yml` | 模型测试、5 个内嵌语义模型、17 个简单指标 |
+| `models/semantic` | 日时间脊柱、7 个比率指标 |
 
 共 16 个派生 dbt 模型。schema 为 `analytics_staging`、`analytics_dimensions`、`analytics_facts`、`analytics_marts`，时间脊柱在 `analytics`。地理、类目、品牌、渠道等为维度属性。
 
-指标包括下单数、支付金额、退款金额、净收入、毛利、支付用户数、新增用户数、支付件数、客单价、退款率等，见 [指标字典](docs/metrics.md)。使用 dbt 1.11 的 `semantic_models` / `measures` / `metrics` 格式，与依赖版本一起锁定，不混用 1.12+ 新格式。`dbt build` 生成 `target/manifest.json` 和 `target/semantic_manifest.json`，供读取 dbt 元数据的工具使用。未部署托管 Semantic Layer 查询 API；本地直接查询汇总表即可。
+指标包括下单数、支付金额、退款金额、净收入、毛利、支付用户数、新增用户数、支付件数、客单价、退款率等，见 [指标字典](docs/metrics.md)。采用模型内嵌 `semantic_model`、列级 `entity` / `dimension` 和模型内简单指标的新版格式；比率指标放在顶层 `metrics`。本地依赖锁定为 dbt Core 1.12.5，不再兼容 1.11。`dbt parse` / `dbt build` 生成 `target/manifest.json`、`target/semantic_manifest.json` 和 `target/osi_document.json`，供读取 dbt 元数据的工具使用。
+
+在 dbt 平台的 v2 部署环境中，将代码同步至部署分支后，在已配置 Semantic Layer 的同一环境运行 Job，命令依次为 `dbt deps`、`dbt build`、`dbt docs generate`；v2 的指标部署需要最后一步。成功后在 Insights 中选择对应环境查询指标。本地生成产物不会自动更新云端。参见 [新版 YAML 迁移说明](https://docs.getdbt.com/docs/build/latest-metrics-spec)和 [指标部署说明](https://docs.getdbt.com/docs/use-dbt-semantic-layer/deploy-sl)。
 
 ## 运行（PowerShell，项目根目录）
 

@@ -1,0 +1,84 @@
+version: 2
+models:
+  - name: dim_users
+    description: "用户表，每天注册 20 位模拟用户"
+    columns:
+      - name: user_id
+        data_tests: [unique, not_null]
+  - name: dim_shops
+    description: "店铺表，30 家模拟店铺"
+    columns:
+      - name: shop_id
+        data_tests: [unique, not_null]
+  - name: dim_products
+    description: "商品表，每家店铺 10 个 SKU"
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: shop_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_shops')
+                field: shop_id
+  - name: fct_orders
+    description: "订单表，含支付退款字段；一单一个店铺"
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: order_date
+        data_tests: [not_null, daily_coverage]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_users')
+                field: user_id
+      - name: shop_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_shops')
+                field: shop_id
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['completed', 'cancelled', 'refunded', 'partially_refunded']
+  - name: fct_order_items
+    description: "订单明细表，每单 1—4 条不重复商品行"
+    columns:
+      - name: order_item_id
+        data_tests: [unique, not_null]
+      - name: order_date
+        data_tests: [not_null, daily_coverage]
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+  - name: dim_date
+    description: 2020—2027 完整日历，包含闰日和 ISO 周年
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null, daily_coverage]
+  - name: metricflow_time_spine
+    description: MetricFlow 日粒度时间脊柱
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+        data_tests: [unique, not_null]

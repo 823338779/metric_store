@@ -1,0 +1,18 @@
+select order_date, count(*) as order_count,
+    sum(paid_order_count) as paid_order_count,
+    sum(cancelled_order_count) as cancelled_order_count,
+    sum(refunded_order_count) as refunded_order_count,
+    sum(gross_amount) as gross_order_value,
+    sum(discount_amount) as discount_amount,
+    sum(order_amount) as ordered_amount,
+    sum(paid_amount) as paid_amount,
+    sum(refund_amount) as refund_amount,
+    sum(net_revenue) as net_revenue,
+    sum(fulfilled_cost) as fulfilled_cost,
+    sum(gross_profit) as gross_profit,
+    count(distinct case when paid_order_count = 1 then user_id end) as paying_users,
+    sum(paid_amount) / nullif(sum(paid_order_count), 0) as average_order_value,
+    sum(gross_profit) / nullif(sum(net_revenue), 0) as gross_margin_rate,
+    sum(refund_amount) / nullif(sum(paid_amount), 0) as refund_amount_rate,
+    sum(cancelled_order_count)::double / count(*) as cancellation_rate
+from {{ ref('fct_orders') }} group by order_date

@@ -1,0 +1,37 @@
+version: 2
+sources:
+  - name: ecommerce
+    description: 五张模拟电商核心业务表；CNY；本地业务时间，无真实个人信息
+    schema: raw
+    tables:
+      - name: users
+        description: "用户表，每天注册 20 位模拟用户"
+        columns:
+          - name: user_id
+            data_tests: [unique, not_null]
+          - name: registered_date
+            data_tests: [not_null, daily_coverage]
+      - name: shops
+        description: "店铺表，30 家模拟店铺"
+        columns:
+          - name: shop_id
+            data_tests: [unique, not_null]
+      - name: products
+        description: "商品表，每家店铺 10 个 SKU"
+        columns:
+          - name: product_id
+            data_tests: [unique, not_null]
+      - name: orders
+        description: "订单表，含支付退款字段；一单一个店铺"
+        columns:
+          - name: order_id
+            data_tests: [unique, not_null]
+          - name: order_date
+            data_tests: [not_null, daily_coverage]
+      - name: order_items
+        description: "订单明细表，每单 1—4 条不重复商品行"
+        columns:
+          - name: order_item_id
+            data_tests: [unique, not_null]
+          - name: order_date
+            data_tests: [not_null, daily_coverage]

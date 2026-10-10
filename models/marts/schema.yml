@@ -1,0 +1,22 @@
+version: 2
+models:
+  - name: mart_daily_sales
+    description: 全站销售日汇总，用户去重数不可跨日相加，比率需要重新计算
+    columns:
+      - name: order_date
+        data_tests: [unique, not_null, daily_coverage]
+  - name: mart_daily_product
+    description: 商品日销售汇总，商品支付金额为退款前金额
+    columns:
+      - name: order_date
+        data_tests: [not_null, daily_coverage]
+  - name: mart_daily_shop
+    description: 店铺日销售汇总，无订单的店铺日期组合不生成零值行
+    columns:
+      - name: order_date
+        data_tests: [not_null, daily_coverage]
+  - name: mart_user_summary
+    description: 用户累计交易概览，保留尚无订单的用户
+    columns:
+      - name: user_id
+        data_tests: [unique, not_null]

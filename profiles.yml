@@ -1,0 +1,8 @@
+metric_store:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('ECOMMERCE_DB_PATH', 'data/ecommerce.duckdb') }}"
+      schema: analytics
+      threads: 4

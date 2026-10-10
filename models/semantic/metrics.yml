@@ -1,330 +1,44 @@
 version: 2
-semantic_models:
-  - name: orders_semantic
-    description: orders 电商交易语义
-    model: ref('fct_orders')
-    defaults:
-      agg_time_dimension: order_date
-    entities:
-      - name: order
-        type: primary
-        expr: order_id
-      - name: user
-        type: foreign
-        expr: user_id
-      - name: shop
-        type: foreign
-        expr: shop_id
-    dimensions:
-      - name: order_date
-        type: time
-        type_params:
-          time_granularity: day
-      - name: order_status
-        type: categorical
-      - name: device_type
-        type: categorical
-      - name: channel
-        type: categorical
-      - name: payment_method
-        type: categorical
-    measures:
-      - name: m_total_orders
-        description: "下单数"
-        expr: "order_count"
-        agg: sum
-      - name: m_paid_orders
-        description: "支付订单数"
-        expr: "paid_order_count"
-        agg: sum
-      - name: m_cancelled_orders
-        description: "取消订单数"
-        expr: "cancelled_order_count"
-        agg: sum
-      - name: m_refunded_orders
-        description: "退款订单数"
-        expr: "refunded_order_count"
-        agg: sum
-      - name: m_gross_order_value
-        description: "下单原价金额，含取消"
-        expr: "gross_amount"
-        agg: sum
-      - name: m_ordered_amount
-        description: "下单折后金额，含取消"
-        expr: "order_amount"
-        agg: sum
-      - name: m_order_discounts
-        description: "下单优惠金额，含取消"
-        expr: "discount_amount"
-        agg: sum
-      - name: m_paid_revenue
-        description: "支付金额，退款前"
-        expr: "paid_amount"
-        agg: sum
-      - name: m_refund_amount
-        description: "退款金额"
-        expr: "refund_amount"
-        agg: sum
-      - name: m_net_revenue
-        description: "支付减退款"
-        expr: "net_revenue"
-        agg: sum
-      - name: m_fulfilled_cost
-        description: "已履约商品成本，退款不冲回"
-        expr: "fulfilled_cost"
-        agg: sum
-      - name: m_gross_profit
-        description: "净收入减履约商品成本"
-        expr: "gross_profit"
-        agg: sum
-      - name: m_paying_users
-        description: "去重支付用户数"
-        expr: "case when paid_order_count = 1 then user_id end"
-        agg: count_distinct
-  - name: order_items_semantic
-    description: order_items 电商交易语义
-    model: ref('fct_order_items')
-    defaults:
-      agg_time_dimension: order_date
-    entities:
-      - name: order_item
-        type: primary
-        expr: order_item_id
-      - name: order
-        type: foreign
-        expr: order_id
-      - name: product
-        type: foreign
-        expr: product_id
-      - name: user
-        type: foreign
-        expr: user_id
-      - name: shop
-        type: foreign
-        expr: shop_id
-    dimensions:
-      - name: order_date
-        type: time
-        type_params:
-          time_granularity: day
-      - name: order_status
-        type: categorical
-    measures:
-      - name: m_ordered_units
-        description: "下单件数，含取消"
-        expr: "quantity"
-        agg: sum
-      - name: m_paid_units
-        description: "已支付件数，退货前"
-        expr: "paid_quantity"
-        agg: sum
-      - name: m_paid_item_revenue
-        description: "商品支付金额，退款前"
-        expr: "paid_item_amount"
-        agg: sum
-  - name: users_semantic
-    model: ref('dim_users')
-    defaults:
-      agg_time_dimension: registered_date
-    entities:
-      - name: user
-        type: primary
-        expr: user_id
-    dimensions:
-      - name: registered_date
-        type: time
-        type_params:
-          time_granularity: day
-      - name: province
-        type: categorical
-      - name: membership_tier
-        type: categorical
-      - name: acquisition_channel
-        type: categorical
-    measures:
-      - name: m_new_users
-        expr: 1
-        agg: sum
-  - name: products_semantic
-    model: ref('dim_products')
-    entities:
-      - name: product
-        type: primary
-        expr: product_id
-      - name: shop
-        type: foreign
-        expr: shop_id
-    dimensions:
-      - name: product_name
-        type: categorical
-      - name: sku
-        type: categorical
-      - name: category_name
-        type: categorical
-      - name: brand_name
-        type: categorical
-  - name: shops_semantic
-    model: ref('dim_shops')
-    entities:
-      - name: shop
-        type: primary
-        expr: shop_id
-    dimensions:
-      - name: shop_name
-        type: categorical
-      - name: shop_type
-        type: categorical
-      - name: province
-        type: categorical
 metrics:
-  - name: total_orders
-    label: "下单数"
-    description: "下单数"
-    type: simple
-    type_params:
-      measure: m_total_orders
-  - name: paid_orders
-    label: "支付订单数"
-    description: "支付订单数"
-    type: simple
-    type_params:
-      measure: m_paid_orders
-  - name: cancelled_orders
-    label: "取消订单数"
-    description: "取消订单数"
-    type: simple
-    type_params:
-      measure: m_cancelled_orders
-  - name: refunded_orders
-    label: "退款订单数"
-    description: "退款订单数"
-    type: simple
-    type_params:
-      measure: m_refunded_orders
-  - name: gross_order_value
-    label: "下单原价金额，含取消"
-    description: "下单原价金额，含取消"
-    type: simple
-    type_params:
-      measure: m_gross_order_value
-  - name: ordered_amount
-    label: "下单折后金额，含取消"
-    description: "下单折后金额，含取消"
-    type: simple
-    type_params:
-      measure: m_ordered_amount
-  - name: order_discounts
-    label: "下单优惠金额，含取消"
-    description: "下单优惠金额，含取消"
-    type: simple
-    type_params:
-      measure: m_order_discounts
-  - name: paid_revenue
-    label: "支付金额，退款前"
-    description: "支付金额，退款前"
-    type: simple
-    type_params:
-      measure: m_paid_revenue
-  - name: refund_amount
-    label: "退款金额"
-    description: "退款金额"
-    type: simple
-    type_params:
-      measure: m_refund_amount
-  - name: net_revenue
-    label: "支付减退款"
-    description: "支付减退款"
-    type: simple
-    type_params:
-      measure: m_net_revenue
-  - name: fulfilled_cost
-    label: "已履约商品成本，退款不冲回"
-    description: "已履约商品成本，退款不冲回"
-    type: simple
-    type_params:
-      measure: m_fulfilled_cost
-  - name: gross_profit
-    label: "净收入减履约商品成本"
-    description: "净收入减履约商品成本"
-    type: simple
-    type_params:
-      measure: m_gross_profit
-  - name: paying_users
-    label: "去重支付用户数"
-    description: "去重支付用户数"
-    type: simple
-    type_params:
-      measure: m_paying_users
-  - name: ordered_units
-    label: "下单件数，含取消"
-    description: "下单件数，含取消"
-    type: simple
-    type_params:
-      measure: m_ordered_units
-  - name: paid_units
-    label: "已支付件数，退货前"
-    description: "已支付件数，退货前"
-    type: simple
-    type_params:
-      measure: m_paid_units
-  - name: paid_item_revenue
-    label: "商品支付金额，退款前"
-    description: "商品支付金额，退款前"
-    type: simple
-    type_params:
-      measure: m_paid_item_revenue
-  - name: new_users
-    label: 新增用户数
-    description: 按注册日期统计的新增用户数
-    type: simple
-    type_params:
-      measure: m_new_users
   - name: average_order_value
     label: "支付客单价"
     description: "支付客单价，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: paid_revenue
-      denominator: paid_orders
+    numerator: paid_revenue
+    denominator: paid_orders
   - name: cancellation_rate
     label: "取消率"
     description: "取消率，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: cancelled_orders
-      denominator: total_orders
+    numerator: cancelled_orders
+    denominator: total_orders
   - name: refund_order_rate
     label: "支付订单退款率"
     description: "支付订单退款率，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: refunded_orders
-      denominator: paid_orders
+    numerator: refunded_orders
+    denominator: paid_orders
   - name: refund_amount_rate
     label: "支付金额退款率"
     description: "支付金额退款率，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: refund_amount
-      denominator: paid_revenue
+    numerator: refund_amount
+    denominator: paid_revenue
   - name: gross_margin_rate
     label: "毛利率"
     description: "毛利率，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: gross_profit
-      denominator: net_revenue
+    numerator: gross_profit
+    denominator: net_revenue
   - name: revenue_per_paying_user
     label: "支付用户人均净收入"
     description: "支付用户人均净收入，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: net_revenue
-      denominator: paying_users
+    numerator: net_revenue
+    denominator: paying_users
   - name: units_per_paid_order
     label: "每支付订单件数"
     description: "每支付订单件数，聚合分子除以聚合分母，零分母返回空值"
     type: ratio
-    type_params:
-      numerator: paid_units
-      denominator: paid_orders
+    numerator: paid_units
+    denominator: paid_orders

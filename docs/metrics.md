@@ -1,6 +1,6 @@
 # 电商指标字典
 
-定义采用 dbt Core 1.11 的 `semantic_models` / `measures` / `metrics` 格式，可在 `target/semantic_manifest.json` 中读取。DuckDB 本地汇总查询见 README；本项目没有部署托管 Semantic Layer API。
+定义采用 dbt Core 1.12 / dbt v2 的新版 YAML：`models/schema.yml` 包含 5 个内嵌语义模型及 17 个简单指标，`models/semantic/metrics.yml` 包含 7 个比率指标。实体和维度定义在模型列上，原 measure 的聚合表达式直接写入简单指标；指标名称和业务口径保持不变。解析产物为 `target/semantic_manifest.json` 和 `target/osi_document.json`。DuckDB 本地汇总查询及 dbt 平台指标部署步骤见 README。
 
 所有金额为 CNY。下单金额含取消单，支付金额是退款前实收，净收入为支付减退款。毛利扣除已履约商品成本，退款不冲回成本；不含物流、税费、营销费。商品指标为退款前金额，不将订单退款分摊到商品，避免产生未定义口径。
 

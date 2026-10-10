@@ -4,6 +4,7 @@ target/
 dbt_packages/
 logs/
 .venv/
+.venv-databricks/
 data/
 __pycache__/
 .user.yml

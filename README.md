@@ -1,6 +1,6 @@
 # 电商 dbt 数据模型
 
-本地 DuckDB + dbt Core 1.11，仅 **5 张核心业务源表**，覆盖 **2020-01-01 至 2027-12-31 全部 2,922 天**（包含两个闰日）。每天随机 100—300 笔订单，每单 1—4 条明细；每天注册 20 个用户。固定种子和锁定依赖保证分批与一次生成结果相同。全部为合成数据，金额 CNY，时间为无时区的本地业务时间，未来日期不代表预测。
+dbt Core 1.11 项目，支持本地 DuckDB 和 Databricks，仅 **5 张核心业务源表**，覆盖 **2020-01-01 至 2027-12-31 全部 2,922 天**（包含两个闰日）。每天随机 100—300 笔订单，每单 1—4 条明细；每天注册 20 个用户。固定种子和锁定依赖保证分批与一次生成结果相同。全部为合成数据，金额 CNY，时间为无时区的本地业务时间，未来日期不代表预测。
 
 ## 五张核心表
 
@@ -32,6 +32,8 @@
 
 当前工作区已初始化。复制项目后或需要重新生成时：
 
+Databricks 中的五张源表也已导入 `cjl.raw`，导入结果和云端适配范围见 [Databricks 导入说明](docs/databricks-import.md)。下面命令针对本地 DuckDB。
+
 ```powershell
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -r requirements.txt
@@ -58,7 +60,7 @@ $env:ECOMMERCE_DB_PATH = Join-Path $PWD 'data/incremental-demo.duckdb'
 Remove-Item Env:ECOMMERCE_DB_PATH
 ```
 
-事实表使用 `delete+insert` 与业务主键去重，重算已有最后一天并追加新日期。维度和汇总重建。指定其他起点时传入 `data_start` 和 `data_end`，源数据须在该范围每天齐全。不要把缩小 `data_end` 当作删除已加载历史的方式。
+事实表在 DuckDB 使用 `delete+insert`，在 Databricks 使用 `merge`，均以业务主键去重，重算已有最后一天并追加新日期。维度和汇总重建。指定其他起点时传入 `data_start` 和 `data_end`，源数据须在该范围每天齐全。不要把缩小 `data_end` 当作删除已加载历史的方式。
 
 历史数据更正后，显式回补起点：
 

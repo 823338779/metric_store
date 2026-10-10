@@ -1,0 +1,89 @@
+{
+  "catalog": "cjl",
+  "schema": "raw",
+  "source_path": "/Volumes/cjl/raw/metric_store_import/load_01a1256c_20261010",
+  "checks": {
+    "row_counts": [
+      [
+        "users",
+        "58440",
+        "58440"
+      ],
+      [
+        "shops",
+        "30",
+        "30"
+      ],
+      [
+        "products",
+        "300",
+        "300"
+      ],
+      [
+        "orders",
+        "585732",
+        "585732"
+      ],
+      [
+        "order_items",
+        "1462882",
+        "1462882"
+      ]
+    ],
+    "daily_coverage": [
+      [
+        "orders",
+        "2020-01-01",
+        "2027-12-31",
+        "2922",
+        "100",
+        "300"
+      ],
+      [
+        "order_items",
+        "2020-01-01",
+        "2027-12-31",
+        "2922",
+        "229",
+        "779"
+      ],
+      [
+        "users",
+        "2020-01-01",
+        "2027-12-31",
+        "2922",
+        "20",
+        "20"
+      ]
+    ],
+    "relations_and_money": [
+      [
+        "invalid_user_or_registration",
+        "0"
+      ],
+      [
+        "invalid_order_product_or_shop",
+        "0"
+      ],
+      [
+        "missing_shop",
+        "0"
+      ],
+      [
+        "invalid_payment_or_refund",
+        "0"
+      ],
+      [
+        "order_item_amount_mismatch",
+        "0"
+      ]
+    ],
+    "amount_totals": [
+      [
+        "1302681111.53",
+        "1193119418.65",
+        "32461910.37"
+      ]
+    ]
+  }
+}

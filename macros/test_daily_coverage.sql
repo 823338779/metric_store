@@ -1,8 +1,7 @@
 {% test daily_coverage(model, column_name) %}
 with expected as (
-    select d::date as business_date
-    from generate_series(cast('{{ var("data_start") }}' as date),
-                         cast('{{ var("data_end") }}' as date), interval 1 day) t(d)
+    select d as business_date
+    from ({{ calendar_dates(var('data_start'), var('data_end')) }}) dates
 ), actual as (
     select distinct {{ column_name }} as business_date from {{ model }}
 )

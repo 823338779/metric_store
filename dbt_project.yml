@@ -25,7 +25,7 @@ models:
       +schema: dimensions
     facts:
       +materialized: incremental
-      +incremental_strategy: delete+insert
+      +incremental_strategy: "{{ 'merge' if target.type == 'databricks' else 'delete+insert' }}"
       +on_schema_change: fail
       +schema: facts
     marts:

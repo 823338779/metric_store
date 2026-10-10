@@ -3,3 +3,7 @@
 target/
 dbt_packages/
 logs/
+.venv/
+data/
+__pycache__/
+.user.yml

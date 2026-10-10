@@ -1,0 +1,21 @@
+select
+    order_id,
+    order_date,
+    user_id,
+    shop_id,
+    order_status,
+    channel,
+    device_type,
+    gross_amount,
+    discount_amount,
+    order_amount,
+    cost_amount,
+    item_quantity,
+    paid_amount,
+    refund_amount,
+    payment_method,
+    ordered_at,
+    paid_at,
+    refunded_at,
+    updated_at
+from {{ source('ecommerce', 'orders') }}

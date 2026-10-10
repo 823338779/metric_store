@@ -1,0 +1,93 @@
+{
+  "synthetic": true,
+  "currency": "CNY",
+  "raw_tables": {
+    "order_items": 1462882,
+    "orders": 585732,
+    "products": 300,
+    "shops": 30,
+    "users": 58440
+  },
+  "total_raw_rows": 2107384,
+  "daily_coverage": {
+    "orders": {
+      "start": "2020-01-01",
+      "end": "2027-12-31",
+      "days": 2922,
+      "min_rows_per_day": 100,
+      "max_rows_per_day": 300
+    },
+    "order_items": {
+      "start": "2020-01-01",
+      "end": "2027-12-31",
+      "days": 2922,
+      "min_rows_per_day": 229,
+      "max_rows_per_day": 779
+    },
+    "users": {
+      "start": "2020-01-01",
+      "end": "2027-12-31",
+      "days": 2922,
+      "min_rows_per_day": 20,
+      "max_rows_per_day": 20
+    }
+  },
+  "yearly_sales": [
+    {
+      "year": 2020,
+      "order_count": 70067,
+      "paid_amount": "142784968.49",
+      "refund_amount": "4077725.32",
+      "net_revenue": "138707243.17"
+    },
+    {
+      "year": 2021,
+      "order_count": 74831,
+      "paid_amount": "151499843.17",
+      "refund_amount": "3997250.66",
+      "net_revenue": "147502592.51"
+    },
+    {
+      "year": 2022,
+      "order_count": 73244,
+      "paid_amount": "149358771.25",
+      "refund_amount": "4034819.60",
+      "net_revenue": "145323951.65"
+    },
+    {
+      "year": 2023,
+      "order_count": 74036,
+      "paid_amount": "150503534.13",
+      "refund_amount": "4019732.96",
+      "net_revenue": "146483801.17"
+    },
+    {
+      "year": 2024,
+      "order_count": 72824,
+      "paid_amount": "148083200.25",
+      "refund_amount": "4042070.50",
+      "net_revenue": "144041129.75"
+    },
+    {
+      "year": 2025,
+      "order_count": 72006,
+      "paid_amount": "147197362.15",
+      "refund_amount": "3930326.10",
+      "net_revenue": "143267036.05"
+    },
+    {
+      "year": 2026,
+      "order_count": 74565,
+      "paid_amount": "151816210.11",
+      "refund_amount": "4143836.29",
+      "net_revenue": "147672373.82"
+    },
+    {
+      "year": 2027,
+      "order_count": 74159,
+      "paid_amount": "151875529.10",
+      "refund_amount": "4216148.94",
+      "net_revenue": "147659380.16"
+    }
+  ]
+}

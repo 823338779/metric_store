@@ -183,5 +183,7 @@ if ($LASTEXITCODE -ne 0) { throw '维值映射查询验收失败' }
 
 构建应报告 **3 个模型、10 项数据测试通过**。查询脚本调用原生 adapter 配置校验、维度发现和 query/explain，检查映射节点及 SQL，并输出三条 `MAPPING` 和十条 `PASS`。覆盖原始分组、筛选、排序、LIMIT、多维度映射、同字典复用、各类回退、空结果类型、去重计数、比率、原值查询及无映射总额。结果按完整行比较，不按显示标签转成字典，避免错误地覆盖两个“失败”行。
 
-验收脚本仅放在 `scripts/`，不作为 dbt 数据测试发布。上述命令已验证 DuckDB 的真实构建和查询；不代表已在 StarRocks 上执行。StarRocks 构建仍使用前文的独立测试 schema 和连接配置，查询由已支持 StarRocks 的服务入口执行。
+验收脚本仅放在 `scripts/`，不作为 dbt 数据测试发布。上述命令验证 DuckDB 的真实构建和查询。StarRocks 使用前文的独立测试 schema 和连接配置，查询使用服务的 StarRocks adapter。
+
+2026-10-15 在 StarRocks 3.5.19 验证了全量构建（11 个模型、54 项数据测试）、服务查询探针和上述十组映射查询。示例的 NULL 分支必须放在 `UNION ALL` 首位，以便 StarRocks CTAS 正确推断可空列；否则插入 NULL 状态码或显示值会报 `Insert has filtered data`。服务还需包含 MetricFlow 映射校验对 `INT` 数值类型别名的修复，避免将 `INT` 与 `SMALLINT` 误判为不兼容。
 

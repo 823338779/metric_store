@@ -86,11 +86,13 @@ ecommerce_metrics:
 $demoScripts = (Resolve-Path ../dbt-metricflow-service/.venv/Scripts).Path
 & (Join-Path $demoScripts 'dbt.exe') build --project-dir . --profiles-dir $demoProfiles --select path:models/examples/multi_path
 if ($LASTEXITCODE -ne 0) { throw '示例模型构建失败' }
-& (Join-Path $demoScripts 'python.exe') tests/verify_multi_path_dimensions.py --profiles-dir $demoProfiles
+& (Join-Path $demoScripts 'python.exe') scripts/verify_multi_path_dimensions.py --profiles-dir $demoProfiles
 if ($LASTEXITCODE -ne 0) { throw '多路径验收失败' }
 ```
 
 构建包含三个模型及 15 项非空、唯一性和外键校验。验收脚本调用真实 `engine.list_dimensions(metric_names=["demo_purchase_amount"])`，检查两条完整路径、实体顺序及相同的维度来源，再执行两次单路径查询和一次双路径交叉分组查询，核对实际金额。正常运行应打印两条 `PATH` 和三条 `PASS`。
+
+验收脚本放在 `scripts/`，仅供本地手动运行，不属于 dbt 资源目录。不要将它移入 `tests/`：指标平台会采集该目录作为构建输入，发布校验会拒绝其中的 Python 文件；dbt 的 SQL 数据测试仍保留在 `tests/`。
 
 外层读取路径的方式如下；这里的 `engine` 是加载上述构建产物的 MetricFlowEngine：
 

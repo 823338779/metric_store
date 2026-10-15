@@ -35,3 +35,81 @@ ecommerce_metrics:
 
 本地校验可从 `dbt-metricflow-service` 的环境执行 `dbt build --project-dir <本仓库路径> --profiles-dir <profile目录> --target starrocks`。本地运行时需自行设置 `DBT_PLATFORM_SCHEMA` 为专用测试 schema。构建内的 `calendar_coverage`、`orders_daily_coverage`、`orders_volume_variation` 和 `raw_source_variation` 测试会检查日期边界、每日订单覆盖及各原表的数量波动。原表刷新后，需要重新发布 dbt 运行版本，指标平台才会使用新构建的事实表。
 
+## 同一维度的多条实体路径示例
+
+`models/examples/multi_path/` 提供独立的企业采购示例。三个模型直接生成固定模拟数据，不依赖或修改 `ecommerce_raw`。实体和指标均使用 `demo_` 前缀，与原有电商模型隔离；构建此分支时会新增这三个示例模型及其指标。
+
+每笔采购订单记录实际采购人和归属的企业账户，账户另有一名负责人。采购人和账户负责人都来自 `demo_customers`，因此指标 `demo_purchase_amount` 可以通过两条路径访问同一个 `demo_customers.region` 维度：
+
+```text
+demo_purchase_orders ── demo_customer ──────────────────> demo_customers.region
+                     └─ demo_account ─> demo_accounts
+                                         └─ demo_customer ─> demo_customers.region
+```
+
+两条路径分别是：
+
+| 查询维度 | 业务含义 |
+| --- | --- |
+| `demo_customer__region` | 实际采购人所在地区 |
+| `demo_account__demo_customer__region` | 订单所属账户的负责人所在地区 |
+
+所有关联都是 foreign → primary，客户与账户主键唯一，避免金额因关联产生重复。采购人与账户负责人刻意设置为不同客户，以证明同一个维度终点不代表相同统计口径。
+
+四笔订单总额为 500，预期结果如下；“无分组行”表示该路径没有对应地区记录，不是金额为零：
+
+| 地区 | 按采购人地区统计 | 按账户负责人地区统计 |
+| --- | ---: | ---: |
+| EAST | 300 | 无分组行 |
+| NORTH | 50 | 300 |
+| SOUTH | 150 | 200 |
+
+### 本地复现与验收
+
+在本仓库根目录使用相邻 `dbt-metricflow-service` 的已有环境执行以下 PowerShell 命令。示例只构建新模型，在系统临时目录中创建独立 DuckDB 数据库；无需 StarRocks 连接或原始数据。沿用项目默认的 `target/` 构建目录，MetricFlow CLI 从其中读取语义清单。
+
+```powershell
+$demoProfiles = Join-Path $env:TEMP ("metrics-multi-path-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $demoProfiles | Out-Null
+$env:MULTIPATH_DEMO_DB = Join-Path $demoProfiles 'demo.duckdb'
+@'
+ecommerce_metrics:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('MULTIPATH_DEMO_DB') }}"
+      schema: main
+      threads: 1
+'@ | Set-Content -LiteralPath (Join-Path $demoProfiles 'profiles.yml') -Encoding utf8
+
+$demoScripts = (Resolve-Path ../dbt-metricflow-service/.venv/Scripts).Path
+& (Join-Path $demoScripts 'dbt.exe') build --project-dir . --profiles-dir $demoProfiles --select path:models/examples/multi_path
+if ($LASTEXITCODE -ne 0) { throw '示例模型构建失败' }
+& (Join-Path $demoScripts 'python.exe') tests/verify_multi_path_dimensions.py --profiles-dir $demoProfiles
+if ($LASTEXITCODE -ne 0) { throw '多路径验收失败' }
+```
+
+构建包含三个模型及 15 项非空、唯一性和外键校验。验收脚本调用真实 `engine.list_dimensions(metric_names=["demo_purchase_amount"])`，检查两条完整路径、实体顺序及相同的维度来源，再执行两次单路径查询和一次双路径交叉分组查询，核对实际金额。正常运行应打印两条 `PATH` 和三条 `PASS`。
+
+外层读取路径的方式如下；这里的 `engine` 是加载上述构建产物的 MetricFlowEngine：
+
+```python
+for dimension in engine.list_dimensions(metric_names=["demo_purchase_amount"]):
+    if dimension.name == "region":
+        print(
+            dimension.dunder_name,
+            [entity.element_name for entity in dimension.entity_links],
+            dimension.semantic_model_reference.semantic_model_name,
+        )
+```
+
+返回两项，顺序不影响语义：
+
+```text
+demo_customer__region ['demo_customer'] demo_customers
+demo_account__demo_customer__region ['demo_account', 'demo_customer'] demo_customers
+```
+
+查询时将选中的完整路径传入 `group_by_names`。同时传入两条路径表示按两个业务角色交叉分组，不表示替不同指标分别指定路径。本示例验证一个指标的多路径能力，不增加跨指标路径映射功能。
+

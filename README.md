@@ -115,3 +115,73 @@ demo_account__demo_customer__region ['demo_account', 'demo_customer'] demo_custo
 
 查询时将选中的完整路径传入 `group_by_names`。同时传入两条路径表示按两个业务角色交叉分组，不表示替不同指标分别指定路径。本示例验证一个指标的多路径能力，不增加跨指标路径映射功能。
 
+## 维度显示值映射示例
+
+`models/examples/value_mapping/` 包含三个独立模拟模型，使用配套 dbt/MetricFlow 的正式 `value_mapping` 协议。示例 SQL 只生成固定数据，不依赖或修改电商原表。
+
+| 模型 | 用途 |
+| --- | --- |
+| `demo_mapping_orders` | 八笔订单；状态、目标状态和渠道保留原始代码；总金额 182 |
+| `demo_mapping_status_codes` | 状态显示 semantic model；200 → 成功，404/502 → 失败 |
+| `demo_mapping_channels` | 渠道显示 semantic model；1 → 网页，2 → 应用 |
+
+字典模型的 `code` 列声明为 `raw_value` 维度，`label` 列声明为 `display_value` 维度。业务模型通过名称引用 semantic model，不直接填写物理表名；dbt 构建负责创建这些表。原始键由固定模型数据保证唯一，没有增加字典重复键扫描。
+
+业务维度采用 v2 列配置，完整示例见 [schema.yml](models/examples/value_mapping/schema.yml)：
+
+```yaml
+- name: status_code
+  description: 原始状态用于筛选、分组和排序；仅最终输出替换显示值。
+  dimension:
+    type: categorical
+    value_mapping:
+      semantic_model: demo_mapping_status_codes
+      value_dimension: raw_value
+      display_dimension: display_value
+```
+
+`target_status_code` 复用状态字典，`channel_code` 引用渠道字典。一次查询选中这三个维度时，最终 SQL 有三个独立 LEFT JOIN。映射发生在聚合、排序及 LIMIT 之后，显示名称相同也不能合并结果行。
+
+按原始状态升序查询 `demo_mapping_amount`，过滤原始 NULL 后应得到：
+
+| 原始值（仅作对照） | 实际返回的状态显示值 | 金额 |
+| --- | --- | ---: |
+| 200 | 成功 | 100 |
+| 404 | 失败 | 50 |
+| 502 | 失败 | 10 |
+| 503 | `503`（字典显示值为 NULL） | 5 |
+| 504 | 空字符串 | 6 |
+| 599 | `599`（字典无此键） | 4 |
+
+原始 NULL 单独查询仍返回 NULL，金额为 7。用户 20 同时出现在 404 和 502；`demo_mapping_users` 在两行均为 1，`demo_mapping_amount_per_user` 分别为 50 和 10，证明去重计数和比率没有按显示值重算。`DIMENSION_VALUES` 返回原始数字代码，可继续用于筛选。
+
+### 构建与查询验收
+
+在本仓库根目录执行以下 PowerShell 命令。使用已包含该协议扩展和 v2 列解析修复的相邻服务环境；保留项目默认 `target/` 目录供原生 CLI 加载。首次使用修复后的 dbt 应关闭 partial parse，避免复用旧版本丢失映射的缓存。
+
+```powershell
+$mappingProfiles = Join-Path $env:TEMP ("metrics-value-mapping-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $mappingProfiles | Out-Null
+$env:VALUE_MAPPING_DEMO_DB = Join-Path $mappingProfiles 'demo.duckdb'
+@'
+ecommerce_metrics:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('VALUE_MAPPING_DEMO_DB') }}"
+      schema: main
+      threads: 1
+'@ | Set-Content -LiteralPath (Join-Path $mappingProfiles 'profiles.yml') -Encoding utf8
+
+$mappingScripts = (Resolve-Path ../dbt-metricflow-service/.venv/Scripts).Path
+& (Join-Path $mappingScripts 'dbt.exe') build --no-partial-parse --project-dir . --profiles-dir $mappingProfiles --select path:models/examples/value_mapping
+if ($LASTEXITCODE -ne 0) { throw '维值映射示例构建失败' }
+& (Join-Path $mappingScripts 'python.exe') scripts/verify_value_mapping.py --profiles-dir $mappingProfiles
+if ($LASTEXITCODE -ne 0) { throw '维值映射查询验收失败' }
+```
+
+构建应报告 **3 个模型、10 项数据测试通过**。查询脚本调用原生 adapter 配置校验、维度发现和 query/explain，检查映射节点及 SQL，并输出三条 `MAPPING` 和十条 `PASS`。覆盖原始分组、筛选、排序、LIMIT、多维度映射、同字典复用、各类回退、空结果类型、去重计数、比率、原值查询及无映射总额。结果按完整行比较，不按显示标签转成字典，避免错误地覆盖两个“失败”行。
+
+验收脚本仅放在 `scripts/`，不作为 dbt 数据测试发布。上述命令已验证 DuckDB 的真实构建和查询；不代表已在 StarRocks 上执行。StarRocks 构建仍使用前文的独立测试 schema 和连接配置，查询由已支持 StarRocks 的服务入口执行。
+

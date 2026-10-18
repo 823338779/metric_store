@@ -1,0 +1,171 @@
+version: 2
+
+# 所有业务实体使用 order_demo_ 前缀，映射字典只负责最终显示。
+models:
+  - name: order_demo_customers
+    description: 采购人和账户负责人共用的客户维表；一行一个客户。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: customer_id
+        description: 客户唯一标识，承接两个业务角色的关联路径。
+        entity: {name: order_demo_customer, type: primary}
+        data_tests: [not_null, unique]
+      - name: region_code
+        description: 客户地区原始代码；筛选和分组使用代码，最终结果显示中文地区。
+        dimension:
+          type: categorical
+          value_mapping:
+            semantic_model: order_demo_regions
+            value_dimension: raw_value
+            display_dimension: display_value
+        data_tests: [not_null]
+
+  - name: order_demo_accounts
+    description: 企业采购账户；一行一个账户，每个账户只有一位负责人。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: account_id
+        description: 企业账户唯一标识；10 为账户 A，20 为账户 B。
+        entity: {name: order_demo_account, type: primary}
+        data_tests: [not_null, unique]
+      - name: owner_customer_id
+        description: 账户负责人客户标识，用于账户到客户地区的间接路径。
+        entity: {name: order_demo_customer, type: foreign}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('order_demo_customers'), field: customer_id}
+
+  - name: order_demo_orders
+    description: 六笔固定企业采购订单，一行一单，总金额 800 元，已支付金额 500 元。
+    semantic_model:
+      enabled: true
+    agg_time_dimension: ordered_at
+    columns:
+      - name: order_id
+        description: 订单唯一标识；1001 至 1006 分别对应设计中的 O1 至 O6。
+        entity: {name: order_demo_order, type: primary}
+        data_tests: [not_null, unique]
+      - name: buyer_customer_id
+        description: 实际采购人标识，直接访问 order_demo_customer 的地区维度。
+        entity: {name: order_demo_customer, type: foreign}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('order_demo_customers'), field: customer_id}
+      - name: account_id
+        description: 订单归属账户，经账户负责人间接访问同一个客户地区维度。
+        entity: {name: order_demo_account, type: foreign}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('order_demo_accounts'), field: account_id}
+      - name: ordered_at
+        description: 下单日期；所有模拟订单固定为 2026-10-01，也是指标默认聚合时间。
+        granularity: day
+        dimension: {type: time}
+        data_tests: [not_null]
+      - name: status_code
+        description: 20 已支付、30 已完成、40 用户取消、41 超时关闭；后两者同显示名称但分别计算。
+        dimension:
+          type: categorical
+          value_mapping:
+            semantic_model: order_demo_statuses
+            value_dimension: raw_value
+            display_dimension: display_value
+        data_tests: [not_null]
+      - name: channel_code
+        description: 1 网页、2 应用、99 未知渠道；99 不配置字典以验证原值回退。
+        dimension:
+          type: categorical
+          value_mapping:
+            semantic_model: order_demo_channels
+            value_dimension: raw_value
+            display_dimension: display_value
+        data_tests: [not_null]
+      - name: amount
+        description: 订单金额，单位元；使用 decimal(18, 2)，包含已支付和关闭订单。
+        data_tests: [not_null]
+    # 支付口径只认原始状态 20、30，空值不会计入去重订单或采购人数。
+    metrics:
+      - name: order_demo_order_amount
+        label: 订单总金额
+        description: 全部订单金额合计，固定为 800 元。
+        type: simple
+        agg: sum
+        expr: amount
+      - name: order_demo_paid_amount
+        label: 已支付金额
+        description: 状态 20、30 的订单金额合计，固定为 500 元；本例不包含退款。
+        type: simple
+        agg: sum
+        expr: case when status_code in (20, 30) then amount else 0 end
+      - name: order_demo_paid_order_count
+        label: 已支付订单数
+        description: 状态 20、30 的订单 ID 去重数，固定为 4 单。
+        type: simple
+        agg: count_distinct
+        expr: case when status_code in (20, 30) then order_id else null end
+      - name: order_demo_paid_buyer_count
+        label: 已支付采购人数
+        description: 状态 20、30 的采购人 ID 去重数，固定为 3 人，不可跨地区分组直接相加。
+        type: simple
+        agg: count_distinct
+        expr: case when status_code in (20, 30) then buyer_customer_id else null end
+
+  - name: order_demo_regions
+    description: 地区显示字典；只改变输出文本，两个地区路径各自独立映射。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: code
+        description: 非空且唯一的地区原始代码。
+        entity: {name: order_demo_region_key, type: primary}
+        dimension: {name: raw_value, type: categorical}
+        data_tests: [not_null, unique]
+      - name: label
+        description: 地区中文显示名称。
+        dimension: {name: display_value, type: categorical}
+        data_tests: [not_null]
+
+  - name: order_demo_statuses
+    description: 订单状态显示字典；代码 40 和 41 同为已关闭，但保留独立分组。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: code
+        description: 非空且唯一的订单状态原始代码。
+        entity: {name: order_demo_status_key, type: primary}
+        dimension: {name: raw_value, type: categorical}
+        data_tests: [not_null, unique]
+      - name: label
+        description: 状态中文名称，允许多个原始代码共享相同名称。
+        dimension: {name: display_value, type: categorical}
+        data_tests: [not_null]
+
+  - name: order_demo_channels
+    description: 下单渠道显示字典，缺少的 99 在最终输出时回退到原始代码。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: code
+        description: 非空且唯一的渠道原始代码。
+        entity: {name: order_demo_channel_key, type: primary}
+        dimension: {name: raw_value, type: categorical}
+        data_tests: [not_null, unique]
+      - name: label
+        description: 渠道中文显示名称。
+        dimension: {name: display_value, type: categorical}
+        data_tests: [not_null]
+
+# 比率基于原始分组的聚合结果计算，显示映射不改变分子或分母。
+metrics:
+  - name: order_demo_average_order_value
+    label: 已支付客单价
+    description: 已支付金额除以已支付订单数，整体为 125 元/单；无已支付订单时为 NULL。
+    type: ratio
+    type_params:
+      numerator: order_demo_paid_amount
+      denominator: order_demo_paid_order_count

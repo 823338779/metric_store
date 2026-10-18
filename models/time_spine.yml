@@ -1,0 +1,13 @@
+version: 2
+
+# 示例只覆盖一个业务日，时间骨架仍须满足连续、非空、唯一。
+models:
+  - name: time_spine
+    description: 覆盖固定订单业务日的日粒度时间骨架。
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: 订单业务自然日；本示例固定为 2026-10-01。
+        granularity: day
+        data_tests: [not_null, unique]

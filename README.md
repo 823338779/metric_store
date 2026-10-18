@@ -1,6 +1,6 @@
 # 企业采购订单指标示例
 
-本仓库是独立 dbt 工程，只保留企业采购订单业务。六笔固定模拟订单不依赖任何原始数据库。旧电商模型、原始数据生成脚本及两套独立示例已移除；保留 `ecommerce_metrics` 工程名和 profile 名以兼容现有运行绑定。
+本仓库是独立 dbt 工程，只保留企业采购订单业务。六笔固定模拟订单及四笔退款不依赖任何原始数据库。旧电商模型、原始数据生成脚本及两套独立示例已移除；保留 `ecommerce_metrics` 工程名和 profile 名以兼容现有运行绑定。
 
 ## 模型与指标
 
@@ -34,7 +34,7 @@
 | order_demo_paid_buyer_count | 状态 20、30 的采购人 ID 去重数 | 3 |
 | order_demo_average_order_value | 已支付金额 ÷ 已支付订单数 | 125 |
 
-无已支付订单的分组中，已支付金额与两个计数为 0，客单价为 NULL。本例不包含退款。
+无已支付订单的分组中，已支付金额与两个计数为 0，客单价为 NULL。上述五个原订单指标不扣减退款；退款金额由下文 metric_b 单独统计。
 
 ## 多通路与维值映射
 
@@ -89,7 +89,41 @@ if ($LASTEXITCODE -ne 0) { throw '订单工程构建失败' }
 if ($LASTEXITCODE -ne 0) { throw '订单组合查询验收失败' }
 ```
 
-构建包含 **7 个模型、28 项数据测试、5 个指标**。验收包含路径发现和十组真实查询，同时执行 EXPLAIN 生成的 SQL，并检查最外层映射节点。按完整行比较，避免覆盖同名状态。
+完整构建包含 **12 个模型、57 项数据测试、7 个指标**。原订单验收包含路径发现和十组真实查询，同时执行 EXPLAIN 生成的 SQL，并检查最外层映射节点。按完整行比较，避免覆盖同名状态。
+
+## 跨事实表双指标与多通路查询
+
+[跨表业务 YAML](models/multi_fact/schema.yml) 额外定义五个语义模型，复用原有六笔订单和地区字典。
+
+| 对象 | 物理来源或路径 | 含义 |
+| --- | --- | --- |
+| metric_a | multi_fact_orders | 订单金额，六笔合计 800 元 |
+| metric_b | multi_fact_refunds | 退款金额，四笔合计 155 元 |
+| consumer__dima | 事实表 → multi_fact_consumers | 购买人地区 |
+| account__dimb | 事实表 → multi_fact_accounts | 账户类型 |
+| account__consumer__dima | 事实表 → multi_fact_accounts → multi_fact_consumers | 账户负责人地区 |
+
+退款 9001/9002 分别对应订单 1001 的 20/30 元退款，9003 对应订单 1002 的 80 元退款，9004 对应订单 1004 的 25 元退款。退款模型只从唯一订单键取得购买人与账户，不引入订单金额。语义查询分别聚合订单事实和退款事实，再按共同维度组合；一单多笔退款不会放大订单金额。无退款的组合保留 NULL，不伪装成有退款记录的零元。
+
+两个指标同时按 `consumer__dima, account__dimb` 分组的预期结果：
+
+| consumer__dima | account__dimb | metric_a | metric_b |
+| --- | --- | ---: | ---: |
+| 华东 | 企业账户 | 100 | 50 |
+| 华东 | 渠道账户 | 320 | 80 |
+| 华北 | 企业账户 | 50 | NULL |
+| 华南 | 企业账户 | 330 | 25 |
+
+三个分组字段也可同时使用；账户 10 的负责人来自华北，账户 20 的负责人来自华南。地区及账户类型均在聚合后映射成中文，筛选和 DIMENSION_VALUES 使用原码。两个客户路径共享同一个维度资源，但 optionId 不同；必须用同时选中 metric_a、metric_b 后发现的共同维度选项。
+
+订单日期为 2026-10-01，退款日期为 2026-10-02。按聚合时间查询时，各指标按自己的业务发生日期计入，不能将当日退款金额解释成当日订单的退款金额。
+
+```powershell
+& (Join-Path $orderScripts 'python.exe') scripts/verify_multi_fact_business.py --profiles-dir $orderProfiles
+if ($LASTEXITCODE -ne 0) { throw '跨事实表多通路验收失败' }
+```
+
+本地额外验收五组查询及对应 EXPLAIN SQL，包含总额、购买人加账户类型、双客户路径、三维显示映射和双路径原码筛选。
 
 ## 通过 dbt-service 构建、发布与查询
 
@@ -135,8 +169,8 @@ POST 使用 `Authorization: Bearer <SERVICE_TOKEN>`。凭据只通过运行环�
 if ($LASTEXITCODE -ne 0) { throw '服务发布与查询验收失败' }
 ```
 
-服务脚本核对发布指针、目录仅含五个新指标，并通过 HTTP 验证 QUERY、EXPLAIN、PREVIEW、DIMENSION_VALUES，覆盖双路径、四维显示映射、原始状态筛选、排序与 LIMIT、同名分组和缺失映射回退。
+服务脚本核对发布指针、目录严格包含七个指标，并通过 HTTP 验证 QUERY、EXPLAIN、PREVIEW、DIMENSION_VALUES。除原有双路径、四维显示映射、原始状态筛选、排序与 LIMIT、同名分组和缺失映射回退外，也验收跨事实表的共同维度发现、双路径和三维组合、双路径原码筛选及维值查询。
 
-本地 MetricFlow 的多跳过滤使用 `Dimension('order_demo_customer__region_code', entity_path=['order_demo_account'])`，与分组的完整路径写法不同。服务脚本过滤验收使用订单状态维度，多跳过滤不在该 HTTP 验收范围内。
+本地 MetricFlow 的多跳过滤使用 `Dimension('consumer__dima', entity_path=['account'])`，与分组的完整路径写法不同。HTTP 过滤通过当前指标集合发现的 optionId 指定完整路径；服务脚本同时验收购买人地区和账户负责人地区的原码筛选。
 
 `scripts/` 中的 Python 仅用于手动验收，不能放入 dbt 模型或测试资源目录，服务发布不封存这些脚本。

@@ -31,6 +31,14 @@ EAST, NORTH, SOUTH = "华东", "华北", "华南"
 PAID_LABEL, COMPLETED, CLOSED = "已支付", "已完成", "已关闭"
 WEB, APP, UNKNOWN_CHANNEL = "网页", "应用", "99"
 DECIMAL_TYPE = "Decimal"
+CROSS_METRICS = ("metric_a", "metric_b")
+CONSUMER_OPTION = "dima（consumer）"
+ACCOUNT_OPTION = "dimb（account）"
+OWNER_OPTION = "dima（account → consumer）"
+CONSUMER_COLUMN = "consumer__dima"
+ACCOUNT_COLUMN = "account__dimb"
+OWNER_COLUMN = "account__consumer__dima"
+ENTERPRISE, PARTNER = "企业账户", "渠道账户"
 
 
 def main() -> None:
@@ -57,11 +65,11 @@ def main() -> None:
     assert deployment["activeCommitSha"] == build["commitSha"], deployment
     print(PASS_MESSAGE.format("发布指针与固定源码一致", args.build_id))
 
-    # 新工程的指标目录只能包含五个订单指标，不允许旧电商业务残留。
+    # 目录严格包含五个原订单指标和两个跨事实表指标，不允许旧电商业务残留。
     catalog = call(build_path + "/catalog?limit=200")
     assert catalog["nextCursor"] is None, "示例目录不应超过一页"
     metrics = {item["name"]: item["resourceId"] for item in catalog["items"] if item["kind"] == METRIC_KIND}
-    assert set(metrics) == {AMOUNT, PAID, ORDERS, BUYERS, AVERAGE}, metrics
+    assert set(metrics) == {AMOUNT, PAID, ORDERS, BUYERS, AVERAGE, *CROSS_METRICS}, metrics
     metric_ids = [metrics[name] for name in (AMOUNT, PAID, ORDERS, BUYERS, AVERAGE)]
     suffix = "?" + urlencode({"build_id": args.build_id})
     available = call("/query/available-dimensions" + suffix, {"metricResourceIds": metric_ids})
@@ -122,6 +130,43 @@ def main() -> None:
     preview = call("/query" + suffix, {"mode": PREVIEW, "datasetResourceId": dataset, "limit": 10})
     check("订单预览", preview, ("order_id", "amount"), [(1001, 100), (1002, 200), (1003, 50), (1004, 150), (1005, 120), (1006, 180)])
     print(PASS_MESSAGE.format("EXPLAIN", "包含地区、状态、渠道的映射 SQL"))
+
+    # 共同维度必须以双指标集合重新发现；同一资源的不同角色路径有不同 optionId。
+    cross_ids = [metrics[name] for name in CROSS_METRICS]
+    cross_available = call("/query/available-dimensions" + suffix, {"metricResourceIds": cross_ids})
+    cross_options = {item["displayName"]: item for item in cross_available["dimensions"]}
+    assert {CONSUMER_OPTION, ACCOUNT_OPTION, OWNER_OPTION} <= cross_options.keys(), cross_options
+    assert cross_options[CONSUMER_OPTION]["optionId"] != cross_options[OWNER_OPTION]["optionId"]
+    assert cross_options[CONSUMER_OPTION]["resourceId"] == cross_options[OWNER_OPTION]["resourceId"] is not None
+
+    def cross_query(groups: tuple[str, ...] = (), **extra: Any) -> dict[str, Any]:
+        return call("/query" + suffix, {
+            "mode": QUERY, "metricResourceIds": cross_ids,
+            "groupBy": [{"optionId": cross_options[name]["optionId"]} for name in groups], **extra,
+        })
+
+    check("跨事实表总额", cross_query(), CROSS_METRICS, [(800, 155)])
+    check("跨事实表购买人及账户类型", cross_query((CONSUMER_OPTION, ACCOUNT_OPTION)),
+          (CONSUMER_COLUMN, ACCOUNT_COLUMN, *CROSS_METRICS),
+          [(EAST, ENTERPRISE, 100, 50), (EAST, PARTNER, 320, 80),
+           (NORTH, ENTERPRISE, 50, None), (SOUTH, ENTERPRISE, 330, 25)])
+    check("跨事实表客户双路径", cross_query((CONSUMER_OPTION, OWNER_OPTION)),
+          (CONSUMER_COLUMN, OWNER_COLUMN, *CROSS_METRICS),
+          [(EAST, NORTH, 100, 50), (EAST, SOUTH, 320, 80), (NORTH, NORTH, 50, None), (SOUTH, NORTH, 330, 25)])
+    check("跨事实表三维映射", cross_query((CONSUMER_OPTION, ACCOUNT_OPTION, OWNER_OPTION)),
+          (CONSUMER_COLUMN, ACCOUNT_COLUMN, OWNER_COLUMN, *CROSS_METRICS),
+          [(EAST, ENTERPRISE, NORTH, 100, 50), (EAST, PARTNER, SOUTH, 320, 80),
+           (NORTH, ENTERPRISE, NORTH, 50, None), (SOUTH, ENTERPRISE, NORTH, 330, 25)])
+    check("跨事实表双路径原码筛选", cross_query(filters=[
+        {"optionId": cross_options[CONSUMER_OPTION]["optionId"], "operator": "=", "value": "EAST"},
+        {"optionId": cross_options[OWNER_OPTION]["optionId"], "operator": "=", "value": "NORTH"},
+    ]), CROSS_METRICS, [(100, 50)])
+    check("跨事实表维值保留原码", cross_query(mode=VALUES, dimensionOptionId=cross_options[CONSUMER_OPTION]["optionId"]),
+          (CONSUMER_COLUMN,), [("EAST",), ("NORTH",), ("SOUTH",)])
+    cross_explained = cross_query((CONSUMER_OPTION, ACCOUNT_OPTION, OWNER_OPTION), mode=EXPLAIN)
+    assert all(model in cross_explained["sql"] for model in
+               ("multi_fact_orders", "multi_fact_refunds", "order_demo_regions", "multi_fact_account_types"))
+    print(PASS_MESSAGE.format("跨事实表 EXPLAIN", "两张事实表及两份显示字典均参与查询"))
 
 
 if __name__ == "__main__":

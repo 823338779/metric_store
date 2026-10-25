@@ -1,176 +1,102 @@
-# 企业采购订单指标示例
+# 电商语义模型与指标
 
-本仓库是独立 dbt 工程，只保留企业采购订单业务。六笔固定模拟订单及四笔退款不依赖任何原始数据库。旧电商模型、原始数据生成脚本及两套独立示例已移除；保留 `ecommerce_metrics` 工程名和 profile 名以兼容现有运行绑定。
+本仓库是独立 dbt 工程，直接读取 StarRocks 的 `ecommerce_dw`，不使用 seed，不生成模拟订单或其他业务数据。保留 `ecommerce_metrics` 工程和 profile 名以兼容现有运行绑定。原采购订单与跨事实退款演示已替换，不再提供 `order_demo_*`、`metric_a`、`metric_b` 指标。
 
-## 模型与指标
+## 数据来源与模型
 
-[业务 YAML](models/order_business/schema.yml) 定义六个语义模型、五个指标及数据测试。同目录 SQL 生成固定模拟数据；另有一个日粒度 `time_spine` 模型。
+[源定义](models/ecommerce/sources.yml)声明五张真实源表，[语义定义](models/ecommerce/schema.yml)包含四个语义模型。
 
-| 模型 | 粒度与用途 |
-| --- | --- |
-| order_demo_orders | 一行一笔订单，金额使用 decimal(18, 2) |
-| order_demo_customers | 一行一个客户，采购人与负责人共用地区维度 |
-| order_demo_accounts | 一行一个账户，每个账户只有一位负责人 |
-| order_demo_regions | 地区原值到中文显示值的唯一字典 |
-| order_demo_statuses | 状态原值到中文显示值的唯一字典 |
-| order_demo_channels | 渠道原值到中文显示值的唯一字典 |
+| 语义模型 | 数据源 | 粒度与关联 |
+| --- | --- | --- |
+| orders | fact_order_items + fact_orders | 一条订单商品明细；order_item_id 唯一，order_id 允许重复 |
+| users | dim_customer | 一个用户；user_id 唯一 |
+| products | dim_product | 一个商品；product_id 唯一 |
+| stores | dim_store | 一家店铺；store_id 唯一 |
 
-订单日期均为 **2026-10-01**。客户 1、2、3 分别属于 EAST、NORTH、SOUTH；账户 10、20 的负责人分别为客户 2、3。
+订单以 `user`、`product`、`store` 三个 foreign 实体连接维表 primary 实体。订单头只补充下单日期、用户、店铺、状态、渠道和支付方式，金额与件数只取明细。禁止把订单总额复制到明细后求和。
 
-| 订单 | 采购人 | 账户 | 状态 | 渠道 | 金额（元） |
-| --- | --- | --- | --- | --- | ---: |
-| 1001 | 1 | 10 | 20 | 1 | 100 |
-| 1002 | 1 | 20 | 30 | 2 | 200 |
-| 1003 | 2 | 10 | 20 | 1 | 50 |
-| 1004 | 3 | 10 | 30 | 2 | 150 |
-| 1005 | 1 | 20 | 40 | 1 | 120 |
-| 1006 | 3 | 10 | 41 | 99 | 180 |
+另有一个非语义物理模型 `time_spine`，按四种业务日期的最小/最大值生成连续自然日。源 `dim_date` 只覆盖订单期间，不足以覆盖更早的注册、开店和上架日期，所以不直接作为时间骨架。日期偏移使用 StarRocks 的 [generate_series](https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/)（要求 StarRocks 3.1+），没有固定业务日期或 seed。
 
-| 指标 | 口径 | 总体预期 |
-| --- | --- | ---: |
-| order_demo_order_amount | 所有订单金额合计 | 800 |
-| order_demo_paid_amount | 状态 20、30 的订单金额合计 | 500 |
-| order_demo_paid_order_count | 状态 20、30 的订单 ID 去重数 | 4 |
-| order_demo_paid_buyer_count | 状态 20、30 的采购人 ID 去重数 | 3 |
-| order_demo_average_order_value | 已支付金额 ÷ 已支付订单数 | 125 |
+## 指标口径
 
-无已支付订单的分组中，已支付金额与两个计数为 0，客单价为 NULL。上述五个原订单指标不扣减退款；退款金额由下文 metric_b 单独统计。
+| 指标 | 展示名称 | 计算口径 |
+| --- | --- | --- |
+| order_count | 订单数 | 全状态订单 ID 去重数 |
+| completed_order_count | 成交订单数 | COMPLETED 订单 ID 去重数 |
+| sales_amount | 成交商品金额 | COMPLETED 明细 item_paid_amount 合计，元，不含运费 |
+| sales_quantity | 成交销量 | COMPLETED 明细 quantity 合计，件 |
+| buyer_count | 成交购买人数 | COMPLETED 订单用户 ID 去重数 |
+| average_order_value | 成交客单价 | 成交商品金额 ÷ 成交订单数，元/单；分母为零时 NULL |
+| user_count | 用户数 | 用户 ID 去重数 |
+| new_user_count | 新增注册用户数 | 以注册日期为时间轴统计用户 ID 去重数 |
+| product_count | 商品数 | 商品 ID 去重数 |
+| active_product_count | 在售商品数 | 当前 is_active=1 的商品 ID 去重数 |
+| store_count | 店铺数 | 店铺 ID 去重数 |
+| new_store_count | 新开店铺数 | 以开店日期为时间轴统计店铺 ID 去重数 |
 
-## 多通路与维值映射
+**成交按当前状态定义，只认 `COMPLETED`。** `PENDING`、`CANCELLED` 和 `REFUNDED` 即使金额字段非零也不计入成交；这不是支付流水净收入，也不单独统计退款现金流。成交时间归属于下单日期，不冒认支付完成时间。
 
-两条完整地区路径访问相同客户模型中的 `region_code`：
+订单和购买人数是去重指标，不能将各商品或各月份分组的结果直接相加当作总体。按商品或类目查询客单价时，分子只包含该商品分组金额，分母为包含该组商品的成交订单数；它不是这些订单的完整客单价。
 
-- `order_demo_customer__region_code`：采购人所在地区。
-- `order_demo_account__order_demo_customer__region_code`：账户负责人所在地区。
+用户、商品、店铺模型是当前快照。无日期限制时总数统计全体；时间筛选分别限定注册、上架和开店日期，不能解释为某日历史存量。新增用户数和用户数共享去重表达式，新开店铺数和店铺数亦然；无日期限制时数值相同。在售商品数使用当前在售状态，不是历史在售快照。用户会员等级、商品类目、店铺地区也是当前属性。
 
-所有关联为 foreign → primary；客户、账户和字典原始键均有唯一性测试。两条路径同时分组表示角色交叉分析。
+## 分析维度
 
-| 地区 | 采购人已支付金额 | 负责人已支付金额 |
-| --- | ---: | ---: |
-| 华东 | 300 | 无分组行 |
-| 华北 | 50 | 300 |
-| 华南 | 150 | 200 |
+- 订单：`order_item__order_id`、`order_item__order_status`、`order_item__sales_channel`、`order_item__payment_method`、`order_item__order_date`。
+- 用户：`user__user_code`、`user__gender`、`user__age_group`、`user__member_level`、`user__province`、`user__city`、`user__acquisition_channel`、`user__register_date`。
+- 商品：`product__sku_code`、`product__product_name`、`product__category_level1`、`product__category_level2`、`product__brand_name`、`product__is_active`、`product__launched_date`。
+- 店铺：`store__store_code`、`store__store_name`、`store__store_type`、`store__province`、`store__city`、`store__opened_date`。
 
-`value_mapping` 使用配套 dbt/MetricFlow 扩展协议，在原始筛选、聚合、排序和 LIMIT 之后映射：
+时间分组使用 `metric_time__day`、`metric_time__month` 等引擎支持的粒度。六个订单指标可以组合三个维表的维度；用户数仅按用户模型可达维度分析，商品数和店铺数同理，不通过反向一对多关联制造可用维度。用户省份与店铺省份名称相同但实体路径不同。
 
-- EAST/NORTH/SOUTH 显示为华东/华北/华南；两个路径复用字典，独立映射。
-- 20/30 显示为已支付/已完成；40 用户取消和 41 超时关闭都显示已关闭，仍保留金额 120、180 两行。
-- 1/2 显示为网页/应用；99 无映射时回退为文本 99。
-- `DIMENSION_VALUES` 返回原值，状态仍是数字 20、30、40、41。
+维度保留源值，不额外制造显示字典。通过服务查询时，先按当前 buildId 和指标集合发现可用维度，再使用返回的 optionId，不能跨构建复用。
 
 ## 本地构建与验收
 
-在本仓库执行，使用相邻服务的已有环境。profile 与 DuckDB 放在系统临时目录，构建产物放在 Git 忽略的 `target/`。
+使用当前服务虚拟环境中的 dbt、dbt-starrocks 和 MetricFlow。源表必须可读；目标 schema 必须与 `ecommerce_dw` 不同，且允许建表。不得在源 schema 执行模型构建。
+
+在本仓库执行，先在当前终端安全注入 `DBT_ENV_SECRET_WAREHOUSE_USER`、`DBT_ENV_SECRET_WAREHOUSE_PASSWORD`，并配置 `ECOMMERCE_DB_HOST`、`ECOMMERCE_DB_PORT`、`ECOMMERCE_TARGET_SCHEMA`。凭据不写入仓库。
 
 ```powershell
-$orderProfiles = Join-Path $env:TEMP ("order-business-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $orderProfiles | Out-Null
-$env:ORDER_DEMO_DB = Join-Path $orderProfiles 'demo.duckdb'
+$ecommerceScripts = (Resolve-Path ../dbt-metricflow-service/.venv/Scripts).Path
+$ecommerceTemp = Join-Path $env:TEMP ("ecommerce-validation-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $ecommerceTemp | Out-Null
+$env:DBT_TARGET_PATH = Join-Path $ecommerceTemp 'target'
+$env:DBT_LOG_PATH = Join-Path $ecommerceTemp 'logs'
 ```
 
-在 `$orderProfiles/profiles.yml` 写入：
+在 `$ecommerceTemp/profiles.yml` 写入以下模板：
 
 ```yaml
 ecommerce_metrics:
-  target: local
+  target: validation
   outputs:
-    local:
-      type: duckdb
-      path: "{{ env_var('ORDER_DEMO_DB') }}"
-      schema: main
-      threads: 1
+    validation:
+      type: starrocks
+      host: "{{ env_var('ECOMMERCE_DB_HOST') }}"
+      port: "{{ env_var('ECOMMERCE_DB_PORT', '9030') | int }}"
+      username: "{{ env_var('DBT_ENV_SECRET_WAREHOUSE_USER') }}"
+      password: "{{ env_var('DBT_ENV_SECRET_WAREHOUSE_PASSWORD') }}"
+      catalog: default_catalog
+      schema: "{{ env_var('ECOMMERCE_TARGET_SCHEMA') }}"
+      threads: 2
 ```
 
 ```powershell
-$orderScripts = (Resolve-Path ../dbt-metricflow-service/.venv/Scripts).Path
-& (Join-Path $orderScripts 'dbt.exe') build --no-partial-parse --project-dir . --profiles-dir $orderProfiles
-if ($LASTEXITCODE -ne 0) { throw '订单工程构建失败' }
-& (Join-Path $orderScripts 'python.exe') scripts/verify_order_business.py --profiles-dir $orderProfiles
-if ($LASTEXITCODE -ne 0) { throw '订单组合查询验收失败' }
+& (Join-Path $ecommerceScripts 'dbt.exe') build --no-partial-parse --project-dir . --profiles-dir $ecommerceTemp --target-path $env:DBT_TARGET_PATH --log-path $env:DBT_LOG_PATH
+if ($LASTEXITCODE -ne 0) { throw '电商模型构建失败' }
+& (Join-Path $ecommerceScripts 'python.exe') scripts/verify_ecommerce.py --profiles-dir $ecommerceTemp --manifest (Join-Path $env:DBT_TARGET_PATH 'manifest.json')
+if ($LASTEXITCODE -ne 0) { throw '电商指标验收失败' }
 ```
 
-完整构建包含 **12 个模型、57 项数据测试、7 个指标**。原订单验收包含路径发现和十组真实查询，同时执行 EXPLAIN 生成的 SQL，并检查最外层映射节点。按完整行比较，避免覆盖同名状态。
+构建包含 **5 个物理模型、45 项数据测试、4 个语义模型、12 个指标**。测试覆盖源主键/外键、明细唯一性、三个实体关系、金额/件数逐单对账、维表数量和时间骨架连续性。
 
-## 跨事实表双指标与多通路查询
+验收脚本先检查实际 manifest，无 profile 时只检查模型/指标/无 seed 契约。提供 profile 后执行 14 组真实查询及对应 EXPLAIN SQL，与源表独立查询逐行比较：订单头总额、三个维表计数、非成交状态与零分母、商品类目品牌、用户会员、店铺类型、双省份路径、三维表组合、按月成交、原码筛选、2019 年注册月份和维值查询。金额允许浮点级误差，不放宽到业务金额差额。
 
-[跨表业务 YAML](models/multi_fact/schema.yml) 额外定义五个语义模型，复用原有六笔订单和地区字典。
+原生 MetricFlow CLI 尚不支持 StarRocks 枚举；验收脚本使用与现有服务相同的 DuckDB SQL renderer 和 dbt-starrocks adapter，只验证这里实际执行的聚合/时间 SQL。脚本不导入相邻服务实现类。执行完成后可清理自己创建的临时目录；数据库验收 schema 由执行者按保留需求管理。
 
-| 对象 | 物理来源或路径 | 含义 |
-| --- | --- | --- |
-| metric_a | multi_fact_orders | 订单金额，六笔合计 800 元 |
-| metric_b | multi_fact_refunds | 退款金额，四笔合计 155 元 |
-| consumer__dima | 事实表 → multi_fact_consumers | 购买人地区 |
-| account__dimb | 事实表 → multi_fact_accounts | 账户类型 |
-| account__consumer__dima | 事实表 → multi_fact_accounts → multi_fact_consumers | 账户负责人地区 |
+## 构建发布
 
-退款 9001/9002 分别对应订单 1001 的 20/30 元退款，9003 对应订单 1002 的 80 元退款，9004 对应订单 1004 的 25 元退款。退款模型只从唯一订单键取得购买人与账户，不引入订单金额。语义查询分别聚合订单事实和退款事实，再按共同维度组合；一单多笔退款不会放大订单金额。无退款的组合保留 NULL，不伪装成有退款记录的零元。
+服务从远端 Git 的指定提交读取工程，不读取本地未提交文件。发布前需单独确认推送与目标环境。通过 dbt-service 公开 `POST /builds` 提交完整执行快照，目标 schema 必须与源 `ecommerce_dw` 分离；源数据读取权限也须授予构建凭据。
 
-两个指标同时按 `consumer__dima, account__dimb` 分组的预期结果：
-
-| consumer__dima | account__dimb | metric_a | metric_b |
-| --- | --- | ---: | ---: |
-| 华东 | 企业账户 | 100 | 50 |
-| 华东 | 渠道账户 | 320 | 80 |
-| 华北 | 企业账户 | 50 | NULL |
-| 华南 | 企业账户 | 330 | 25 |
-
-三个分组字段也可同时使用；账户 10 的负责人来自华北，账户 20 的负责人来自华南。地区及账户类型均在聚合后映射成中文，筛选和 DIMENSION_VALUES 使用原码。两个客户路径共享同一个维度资源，但 optionId 不同；必须用同时选中 metric_a、metric_b 后发现的共同维度选项。
-
-订单日期为 2026-10-01，退款日期为 2026-10-02。按聚合时间查询时，各指标按自己的业务发生日期计入，不能将当日退款金额解释成当日订单的退款金额。
-
-```powershell
-& (Join-Path $orderScripts 'python.exe') scripts/verify_multi_fact_business.py --profiles-dir $orderProfiles
-if ($LASTEXITCODE -ne 0) { throw '跨事实表多通路验收失败' }
-```
-
-本地额外验收五组查询及对应 EXPLAIN SQL，包含总额、购买人加账户类型、双客户路径、三维显示映射和双路径原码筛选。
-
-## 通过 dbt-service 构建、发布与查询
-
-服务必须已初始化并配置可信 StarRocks 实例、凭据引用和 SERVICE_TOKEN，启动与配置见相邻服务 README。使用独立演示 schema；删除 Git 模型不会自动删除历史数据库表。
-
-1. 将工程提交并推送到所选远端分支；服务只读取远端 Git，不读取本地未提交文件。
-2. 向 `POST /builds` 提交以下完整执行快照，将占位符替换为实际值。重复同一次请求时保留幂等键。
-3. 读取 `GET /builds/{buildId}`，等待 `buildStatus=SUCCEEDED`；失败时读取 `/logs`。
-4. `ON_SUCCESS` 在构建成功后尝试发布；还需读取 `GET /deployments/current?repository=...&environmentId=...&branchName=...`，确认 `activeBuildId` 等于本次 buildId。构建成功不等于发布成功。
-
-```json
-{
-  "repository": "http://127.0.0.1:3000/agent-admin/metrics.git",
-  "branchName": "main",
-  "commitSha": "<完整远端提交 SHA>",
-  "execution": {
-    "environmentId": "<独立演示环境 UUID>",
-    "configVersion": 1,
-    "connection": {
-      "type": "starrocks",
-      "instanceId": "warehouse",
-      "host": "127.0.0.1",
-      "port": 9030
-    },
-    "credentialRef": "warehouse-readwrite",
-    "catalog": "default_catalog",
-    "schema": "<独立演示 schema>",
-    "threads": 1,
-    "businessTimezone": "Asia/Shanghai"
-  },
-  "deploymentPolicy": "ON_SUCCESS",
-  "idempotencyKey": "<本次构建唯一请求键>"
-}
-```
-
-POST 使用 `Authorization: Bearer <SERVICE_TOKEN>`。凭据只通过运行环境提供，不写入工程。
-
-发布后，先从目录读取资源 ID，再按所选指标集合调用 `POST /query/available-dimensions?build_id={buildId}` 获取 optionId。两个地区选项的 resourceId 相同、optionId 不同；displayName 包含角色路径。查询必须使用该 buildId 和同一指标集合的 optionId，不能跨构建复用。
-
-```powershell
-# SERVICE_TOKEN 由当前终端的受保护环境注入。
-& (Join-Path $orderScripts 'python.exe') scripts/verify_order_service.py --service-url http://127.0.0.1:8000 --build-id <buildId>
-if ($LASTEXITCODE -ne 0) { throw '服务发布与查询验收失败' }
-```
-
-服务脚本核对发布指针、目录严格包含七个指标，并通过 HTTP 验证 QUERY、EXPLAIN、PREVIEW、DIMENSION_VALUES。除原有双路径、四维显示映射、原始状态筛选、排序与 LIMIT、同名分组和缺失映射回退外，也验收跨事实表的共同维度发现、双路径和三维组合、双路径原码筛选及维值查询。
-
-本地 MetricFlow 的多跳过滤使用 `Dimension('consumer__dima', entity_path=['account'])`，与分组的完整路径写法不同。HTTP 过滤通过当前指标集合发现的 optionId 指定完整路径；服务脚本同时验收购买人地区和账户负责人地区的原码筛选。
-
-`scripts/` 中的 Python 仅用于手动验收，不能放入 dbt 模型或测试资源目录，服务发布不封存这些脚本。
+构建成功后还需检查部署状态和当前生效指针，不能将构建成功等同于发布成功。旧指标名不兼容新目录；旧 buildId 仍指向原构建。移除 Git 模型不会自动删除旧数据库表，本变更不执行历史表清理。

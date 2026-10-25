@@ -1,13 +1,13 @@
 version: 2
 
-# 示例只覆盖一个业务日，时间骨架仍须满足连续、非空、唯一。
+# 时间骨架是辅助物理模型，不增加业务语义模型数量。
 models:
   - name: time_spine
-    description: 覆盖固定订单业务日的日粒度时间骨架。
+    description: 覆盖下单、注册、商品上架和开店完整日期范围的连续日粒度时间骨架。
     time_spine:
       standard_granularity_column: date_day
     columns:
       - name: date_day
-        description: 订单业务自然日；本示例固定为 2026-10-01。
+        description: 四个模型最早业务日至最晚业务日之间的自然日，含首尾日期。
         granularity: day
         data_tests: [not_null, unique]

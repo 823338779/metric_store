@@ -1,0 +1,330 @@
+# 订单明细与三个唯一维表关联；去重计数与金额口径分别定义。
+version: 2
+models:
+- name: orders
+  description: 订单语义模型：一行一条商品明细，以明细金额避免订单总额重复累计。
+  semantic_model:
+    enabled: true
+  agg_time_dimension: order_date
+  columns:
+  - name: order_item_id
+    description: 订单商品明细唯一标识；同一订单可以包含多条明细。
+    entity:
+      name: order_item
+      type: primary
+    data_tests:
+    - not_null
+    - unique
+  - name: order_id
+    description: 订单标识，明细中允许重复；订单指标按此字段去重。
+    dimension:
+      type: categorical
+    data_tests:
+    - not_null
+  - name: user_id
+    description: 订单购买用户标识。
+    entity:
+      name: user
+      type: foreign
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('users')
+          field: user_id
+  - name: product_id
+    description: 明细商品标识。
+    entity:
+      name: product
+      type: foreign
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('products')
+          field: product_id
+  - name: store_id
+    description: 订单归属店铺标识。
+    entity:
+      name: store
+      type: foreign
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('stores')
+          field: store_id
+  - name: order_date
+    description: 订单头下单日期，成交指标仍按下单日期归属，不是支付日期。
+    dimension:
+      type: time
+    granularity: day
+    data_tests:
+    - not_null
+  - name: order_status
+    description: 订单当前状态；仅 COMPLETED 计入成交，其他状态不计入。
+    dimension:
+      type: categorical
+  - name: sales_channel
+    description: 订单销售渠道。
+    dimension:
+      type: categorical
+  - name: payment_method
+    description: 订单记录的支付方式，不代表已支付成功。
+    dimension:
+      type: categorical
+  - name: quantity
+    description: 明细商品件数，包含非成交状态；成交销量按标记过滤。
+    data_tests:
+    - not_null
+  - name: unit_price
+    description: 下单时明细商品单价，单位元。
+    data_tests:
+    - not_null
+  - name: item_gross_amount
+    description: 明细折前商品金额，单位元，不含运费。
+    data_tests:
+    - not_null
+  - name: item_discount_amount
+    description: 明细商品优惠金额，单位元。
+    data_tests:
+    - not_null
+  - name: item_paid_amount
+    description: 明细折后商品金额，单位元；非成交状态也可能有值，不直接视作收入。
+    data_tests:
+    - not_null
+  - name: is_completed
+    description: 成交标记：订单状态 COMPLETED 为 1，其余为 0。
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - 0
+          - 1
+          quote: false
+  metrics:
+  - name: order_count
+    label: 订单数
+    description: 所有状态的订单 ID 去重数；跨商品或日期分组不可直接累加。
+    type: simple
+    agg: count_distinct
+    expr: order_id
+  - name: completed_order_count
+    label: 成交订单数
+    description: COMPLETED 订单 ID 去重数；商品分组内仅统计包含该商品的订单。
+    type: simple
+    agg: count_distinct
+    expr: case when is_completed = 1 then order_id else null end
+  - name: sales_amount
+    label: 成交商品金额
+    description: COMPLETED 明细折后商品金额之和，单位元，不含运费，排除已退款订单；不是支付流水净收入。
+    type: simple
+    agg: sum
+    expr: case when is_completed = 1 then item_paid_amount else 0 end
+  - name: sales_quantity
+    label: 成交销量
+    description: COMPLETED 明细商品件数之和。
+    type: simple
+    agg: sum
+    expr: case when is_completed = 1 then quantity else 0 end
+  - name: buyer_count
+    label: 成交购买人数
+    description: COMPLETED 订单的购买用户去重数，跨分组不可直接相加。
+    type: simple
+    agg: count_distinct
+    expr: case when is_completed = 1 then user_id else null end
+- name: users
+  description: 用户语义模型：一行一个当前用户，不包含历史会员属性快照。
+  semantic_model:
+    enabled: true
+  agg_time_dimension: register_date
+  columns:
+  - name: user_id
+    description: 用户唯一标识，源 customer_key。
+    entity:
+      name: user
+      type: primary
+    data_tests:
+    - not_null
+    - unique
+  - name: user_code
+    description: 用户业务编号，不使用姓名识别分析结果。
+    dimension:
+      type: categorical
+  - name: gender
+    description: 用户性别，按源值分组。
+    dimension:
+      type: categorical
+  - name: age_group
+    description: 当前年龄分组。
+    dimension:
+      type: categorical
+  - name: member_level
+    description: 当前会员等级，不表示下单时的等级。
+    dimension:
+      type: categorical
+  - name: province
+    description: 用户所在省份，与店铺省份独立。
+    dimension:
+      type: categorical
+  - name: city
+    description: 用户所在城市，与店铺城市独立。
+    dimension:
+      type: categorical
+  - name: register_date
+    description: 用户注册日期，用户指标默认聚合时间。
+    dimension:
+      type: time
+    granularity: day
+    data_tests:
+    - not_null
+  - name: acquisition_channel
+    description: 用户首次获客渠道。
+    dimension:
+      type: categorical
+  metrics:
+  - name: user_count
+    label: 用户数
+    description: 当前用户去重数；无时间筛选为全部用户，时间筛选限定注册日期，不是历史存量。
+    type: simple
+    agg: count_distinct
+    expr: user_id
+  - name: new_user_count
+    label: 新增注册用户数
+    description: 按注册日期统计用户去重数；无日期限制时与用户数相同。
+    type: simple
+    agg: count_distinct
+    expr: user_id
+- name: products
+  description: 商品语义模型：一行一个商品，类目、品牌和在售标记均为当前快照。
+  semantic_model:
+    enabled: true
+  agg_time_dimension: launched_date
+  columns:
+  - name: product_id
+    description: 商品唯一标识，源 product_key。
+    entity:
+      name: product
+      type: primary
+    data_tests:
+    - not_null
+    - unique
+  - name: sku_code
+    description: 商品 SKU 编码。
+    dimension:
+      type: categorical
+  - name: product_name
+    description: 当前商品名称。
+    dimension:
+      type: categorical
+  - name: category_level1
+    description: 商品一级类目。
+    dimension:
+      type: categorical
+  - name: category_level2
+    description: 商品二级类目。
+    dimension:
+      type: categorical
+  - name: brand_name
+    description: 商品品牌。
+    dimension:
+      type: categorical
+  - name: list_price
+    description: 当前商品标价，单位元，不作为历史成交价。
+  - name: cost_price
+    description: 当前商品成本单价，单位元；不用于推算历史毛利。
+  - name: launched_date
+    description: 商品首次上架日期，商品指标默认聚合时间。
+    dimension:
+      type: time
+    granularity: day
+    data_tests:
+    - not_null
+  - name: is_active
+    description: 当前是否在售：1 在售、0 不在售。
+    dimension:
+      type: categorical
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - 0
+          - 1
+          quote: false
+  metrics:
+  - name: product_count
+    label: 商品数
+    description: 当前目录商品去重数；时间筛选限定首次上架日期，不是历史商品存量。
+    type: simple
+    agg: count_distinct
+    expr: product_id
+  - name: active_product_count
+    label: 在售商品数
+    description: 当前 is_active=1 的商品去重数；时间筛选限定上架日期，不是历史在售数。
+    type: simple
+    agg: count_distinct
+    expr: case when is_active = 1 then product_id else null end
+- name: stores
+  description: 店铺语义模型：一行一家店铺，地域和类型为当前属性。
+  semantic_model:
+    enabled: true
+  agg_time_dimension: opened_date
+  columns:
+  - name: store_id
+    description: 店铺唯一标识，源 store_key。
+    entity:
+      name: store
+      type: primary
+    data_tests:
+    - not_null
+    - unique
+  - name: store_code
+    description: 店铺业务编号。
+    dimension:
+      type: categorical
+  - name: store_name
+    description: 店铺名称。
+    dimension:
+      type: categorical
+  - name: store_type
+    description: 店铺经营类型。
+    dimension:
+      type: categorical
+  - name: province
+    description: 店铺所在省份，与用户省份独立。
+    dimension:
+      type: categorical
+  - name: city
+    description: 店铺所在城市，与用户城市独立。
+    dimension:
+      type: categorical
+  - name: opened_date
+    description: 店铺开店日期，店铺指标默认聚合时间。
+    dimension:
+      type: time
+    granularity: day
+    data_tests:
+    - not_null
+  metrics:
+  - name: store_count
+    label: 店铺数
+    description: 当前目录店铺去重数；时间筛选限定开店日期，不是历史店铺存量。
+    type: simple
+    agg: count_distinct
+    expr: store_id
+  - name: new_store_count
+    label: 新开店铺数
+    description: 按开店日期统计店铺去重数；无日期限制时与店铺数相同。
+    type: simple
+    agg: count_distinct
+    expr: store_id
+metrics:
+- name: average_order_value
+  label: 成交客单价
+  description: 成交商品金额除以成交订单数，单位元/单；不含运费，分母为零时为 NULL。商品分组下表示该组商品贡献的单均金额。
+  type: ratio
+  type_params:
+    numerator: sales_amount
+    denominator: completed_order_count

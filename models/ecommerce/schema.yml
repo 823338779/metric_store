@@ -69,10 +69,6 @@ models:
     description: 订单销售渠道。
     dimension:
       type: categorical
-  - name: payment_method
-    description: 订单记录的支付方式，不代表已支付成功。
-    dimension:
-      type: categorical
   - name: quantity
     description: 明细商品件数，包含非成交状态；成交销量按标记过滤。
     data_tests:
@@ -90,7 +86,7 @@ models:
     data_tests:
     - not_null
   - name: item_paid_amount
-    description: 明细折后商品金额，单位元；非成交状态也可能有值，不直接视作收入。
+    description: 源 payable_amount：明细折后应付金额，单位元，不含运费；仅成交状态计入成交金额。
     data_tests:
     - not_null
   - name: is_completed
@@ -135,41 +131,25 @@ models:
     agg: count_distinct
     expr: case when is_completed = 1 then user_id else null end
 - name: users
-  description: 用户语义模型：一行一个当前用户，不包含历史会员属性快照。
+  description: 用户语义模型：一行一条客户注册记录，会员等级为注册时属性。
   semantic_model:
     enabled: true
   agg_time_dimension: register_date
   columns:
   - name: user_id
-    description: 用户唯一标识，源 customer_key。
+    description: 用户唯一标识，源 customer_id。
     entity:
       name: user
       type: primary
     data_tests:
     - not_null
     - unique
-  - name: user_code
-    description: 用户业务编号，不使用姓名识别分析结果。
-    dimension:
-      type: categorical
-  - name: gender
-    description: 用户性别，按源值分组。
-    dimension:
-      type: categorical
-  - name: age_group
-    description: 当前年龄分组。
-    dimension:
-      type: categorical
   - name: member_level
-    description: 当前会员等级，不表示下单时的等级。
+    description: 注册时的会员等级，不表示下单时的等级。
     dimension:
       type: categorical
   - name: province
     description: 用户所在省份，与店铺省份独立。
-    dimension:
-      type: categorical
-  - name: city
-    description: 用户所在城市，与店铺城市独立。
     dimension:
       type: categorical
   - name: register_date
@@ -197,13 +177,13 @@ models:
     agg: count_distinct
     expr: user_id
 - name: products
-  description: 商品语义模型：一行一个商品，类目、品牌和在售标记均为当前快照。
+  description: 商品语义模型：一行一个商品，类目、品牌来自 ODS 商品上架记录。
   semantic_model:
     enabled: true
   agg_time_dimension: launched_date
   columns:
   - name: product_id
-    description: 商品唯一标识，源 product_key。
+    description: 商品唯一标识，源 product_id。
     entity:
       name: product
       type: primary
@@ -222,10 +202,6 @@ models:
     description: 商品一级类目。
     dimension:
       type: categorical
-  - name: category_level2
-    description: 商品二级类目。
-    dimension:
-      type: categorical
   - name: brand_name
     description: 商品品牌。
     dimension:
@@ -241,18 +217,6 @@ models:
     granularity: day
     data_tests:
     - not_null
-  - name: is_active
-    description: 当前是否在售：1 在售、0 不在售。
-    dimension:
-      type: categorical
-    data_tests:
-    - not_null
-    - accepted_values:
-        arguments:
-          values:
-          - 0
-          - 1
-          quote: false
   metrics:
   - name: product_count
     label: 商品数
@@ -260,44 +224,26 @@ models:
     type: simple
     agg: count_distinct
     expr: product_id
-  - name: active_product_count
-    label: 在售商品数
-    description: 当前 is_active=1 的商品去重数；时间筛选限定上架日期，不是历史在售数。
-    type: simple
-    agg: count_distinct
-    expr: case when is_active = 1 then product_id else null end
 - name: stores
-  description: 店铺语义模型：一行一家店铺，地域和类型为当前属性。
+  description: 店铺语义模型：一行一家店铺，地域属性来自 ODS 入驻记录。
   semantic_model:
     enabled: true
   agg_time_dimension: opened_date
   columns:
   - name: store_id
-    description: 店铺唯一标识，源 store_key。
+    description: 店铺唯一标识，源 store_id。
     entity:
       name: store
       type: primary
     data_tests:
     - not_null
     - unique
-  - name: store_code
-    description: 店铺业务编号。
-    dimension:
-      type: categorical
   - name: store_name
     description: 店铺名称。
     dimension:
       type: categorical
-  - name: store_type
-    description: 店铺经营类型。
-    dimension:
-      type: categorical
   - name: province
     description: 店铺所在省份，与用户省份独立。
-    dimension:
-      type: categorical
-  - name: city
-    description: 店铺所在城市，与用户城市独立。
     dimension:
       type: categorical
   - name: opened_date

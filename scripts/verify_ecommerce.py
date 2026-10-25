@@ -15,7 +15,7 @@ MODELS = {"orders", "users", "products", "stores"}
 METRICS = {
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
     "buyer_count", "average_order_value", "user_count", "new_user_count",
-    "product_count", "active_product_count", "store_count", "new_store_count",
+    "product_count", "store_count", "new_store_count",
 }
 ORDER_METRICS = (
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
@@ -24,50 +24,49 @@ ORDER_METRICS = (
 ORDER_EXPRESSIONS = """
 count(distinct o.order_id) as order_count,
 count(distinct case when o.order_status = 'COMPLETED' then o.order_id end) as completed_order_count,
-sum(case when o.order_status = 'COMPLETED' then i.item_paid_amount else 0 end) as sales_amount,
+sum(case when o.order_status = 'COMPLETED' then i.payable_amount else 0 end) as sales_amount,
 sum(case when o.order_status = 'COMPLETED' then i.quantity else 0 end) as sales_quantity,
-count(distinct case when o.order_status = 'COMPLETED' then o.customer_key end) as buyer_count,
-sum(case when o.order_status = 'COMPLETED' then i.item_paid_amount else 0 end)
+count(distinct case when o.order_status = 'COMPLETED' then o.customer_id end) as buyer_count,
+sum(case when o.order_status = 'COMPLETED' then i.payable_amount else 0 end)
  / nullif(count(distinct case when o.order_status = 'COMPLETED' then o.order_id end), 0)
  as average_order_value
 """
 ORDER_FROM = """
-from ecommerce_dw.fact_order_items i
-join ecommerce_dw.fact_orders o on i.order_id = o.order_id
-join ecommerce_dw.dim_customer u on o.customer_key = u.customer_key
-join ecommerce_dw.dim_product p on i.product_key = p.product_key
-join ecommerce_dw.dim_store s on o.store_key = s.store_key
+from ecommerce_dw.ods_order_items i
+join ecommerce_dw.ods_orders o on i.order_id = o.order_id
+join ecommerce_dw.ods_customers u on o.customer_id = u.customer_id
+join ecommerce_dw.ods_products p on i.product_id = p.product_id
+join ecommerce_dw.ods_stores s on o.store_id = s.store_id
 """
 HEADER_SQL = """
 select count(distinct order_id) as order_count,
 count(distinct case when order_status = 'COMPLETED' then order_id end) as completed_order_count,
 sum(case when order_status = 'COMPLETED' then paid_amount - shipping_amount else 0 end) as sales_amount,
-sum(case when order_status = 'COMPLETED' then total_items else 0 end) as sales_quantity,
-count(distinct case when order_status = 'COMPLETED' then customer_key end) as buyer_count,
+sum(case when order_status = 'COMPLETED' then total_quantity else 0 end) as sales_quantity,
+count(distinct case when order_status = 'COMPLETED' then customer_id end) as buyer_count,
 sum(case when order_status = 'COMPLETED' then paid_amount - shipping_amount else 0 end)
  / nullif(count(distinct case when order_status = 'COMPLETED' then order_id end), 0)
  as average_order_value
-from ecommerce_dw.fact_orders
+from ecommerce_dw.ods_orders
 """
 USER_SQL = """
-select count(distinct customer_key) as user_count, count(distinct customer_key) as new_user_count
-from ecommerce_dw.dim_customer
+select count(distinct customer_id) as user_count, count(distinct customer_id) as new_user_count
+from ecommerce_dw.ods_customers
 """
 PRODUCT_SQL = """
-select count(distinct product_key) as product_count,
-count(distinct case when is_active = 1 then product_key end) as active_product_count
-from ecommerce_dw.dim_product
+select count(distinct product_id) as product_count
+from ecommerce_dw.ods_products
 """
 STORE_SQL = """
-select count(distinct store_key) as store_count, count(distinct store_key) as new_store_count
-from ecommerce_dw.dim_store
+select count(distinct store_id) as store_count, count(distinct store_id) as new_store_count
+from ecommerce_dw.ods_stores
 """
 EARLY_USERS_SQL = """
-select date_trunc('month', register_date) as metric_time__month,
-count(distinct customer_key) as new_user_count
-from ecommerce_dw.dim_customer
-where register_date >= cast('2019-01-01' as date) and register_date < cast('2020-01-01' as date)
-group by date_trunc('month', register_date)
+select date_trunc('month', biz_date) as metric_time__month,
+count(distinct customer_id) as new_user_count
+from ecommerce_dw.ods_customers
+where biz_date >= cast('2020-01-01' as date) and biz_date < cast('2021-01-01' as date)
+group by date_trunc('month', biz_date)
 """
 SOURCE_STATE_FILTER = "o.order_status = 'CANCELLED'"
 SEMANTIC_STATE_FILTER = "{{ Dimension('order_item__order_status') }} = 'CANCELLED'"
@@ -83,7 +82,7 @@ def verify_manifest(path: Path) -> None:
     assert models == MODELS, f"语义模型不符：{models}"
     assert metrics == METRICS, f"指标不符：{metrics}"
     assert not any(node["resource_type"] == "seed" for node in manifest["nodes"].values())
-    print("PASS: 四个语义模型、十二个指标，无 seed")
+    print("PASS: 四个语义模型、十一个指标，无 seed")
 
 
 def compare_tables(actual, expected, columns: tuple[str, ...], name: str) -> None:
@@ -135,7 +134,7 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     )
     engine = MetricFlowEngine(semantic_manifest_lookup=SemanticManifestLookup(semantic_manifest), sql_client=client)
     dimensions = {item.dunder_name for item in engine.list_dimensions(metric_names=list(ORDER_METRICS))}
-    assert {"user__member_level", "product__brand_name", "store__store_type"} <= dimensions
+    assert {"user__member_level", "product__brand_name", "store__province"} <= dimensions
     request = MetricFlowQueryRequest.create
 
     def check(name, query, source_sql, columns):
@@ -151,7 +150,7 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     check("订单全部指标与订单头对账", request(metric_names=list(ORDER_METRICS)), HEADER_SQL, ORDER_METRICS)
     for name, metrics, sql in (
         ("用户总数", ("user_count", "new_user_count"), USER_SQL),
-        ("商品及在售总数", ("product_count", "active_product_count"), PRODUCT_SQL),
+        ("商品总数", ("product_count",), PRODUCT_SQL),
         ("店铺总数", ("store_count", "new_store_count"), STORE_SQL),
     ):
         check(name, request(metric_names=list(metrics)), sql, metrics)
@@ -159,12 +158,12 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     # 路径组合覆盖事实自身、三张维表、同名省份字段和聚合时间。
     for name, paths, expressions in (
         ("订单状态与零成交比率", ("order_item__order_status",), ("o.order_status",)),
-        ("商品类目及品牌", ("product__category_level1", "product__brand_name"), ("p.category_level1", "p.brand_name")),
+        ("商品类目及品牌", ("product__category_level1", "product__brand_name"), ("p.category", "p.brand")),
         ("用户会员等级", ("user__member_level",), ("u.member_level",)),
-        ("店铺类型", ("store__store_type",), ("s.store_type",)),
+        ("店铺省份", ("store__province",), ("s.province",)),
         ("用户与店铺省份交叉", ("user__province", "store__province"), ("u.province", "s.province")),
-        ("三个维表同时关联", ("user__member_level", "product__brand_name", "store__store_type"), ("u.member_level", "p.brand_name", "s.store_type")),
-        ("按月成交", ("metric_time__month",), ("date_trunc('month', o.order_date)",)),
+        ("三个维表同时关联", ("user__member_level", "product__brand_name", "store__province"), ("u.member_level", "p.brand", "s.province")),
+        ("按月成交", ("metric_time__month",), ("date_trunc('month', o.biz_date)",)),
     ):
         select = ", ".join(f"{expr} as {path}" for path, expr in zip(paths, expressions))
         sql = f"select {select}, {ORDER_EXPRESSIONS} {ORDER_FROM} group by {', '.join(expressions)}"
@@ -172,12 +171,12 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
 
     check("取消订单筛选", request(metric_names=list(ORDER_METRICS), where_constraints=[SEMANTIC_STATE_FILTER]),
           f"select {ORDER_EXPRESSIONS} {ORDER_FROM} where {SOURCE_STATE_FILTER}", ORDER_METRICS)
-    check("2019 年注册月份", request(metric_names=["new_user_count"], group_by_names=["metric_time__month"],
-          time_constraint_start=datetime.datetime(2019, 1, 1), time_constraint_end=datetime.datetime(2019, 12, 31)),
+    check("2020 年注册月份", request(metric_names=["new_user_count"], group_by_names=["metric_time__month"],
+          time_constraint_start=datetime.datetime(2020, 1, 1), time_constraint_end=datetime.datetime(2020, 12, 31)),
           EARLY_USERS_SQL, ("metric_time__month", "new_user_count"))
     check("订单状态维值", request(metric_names=["sales_amount"], group_by_names=["order_item__order_status"],
           query_type=MetricFlowQueryType.DIMENSION_VALUES),
-          "select distinct order_status as order_item__order_status from ecommerce_dw.fact_orders",
+          "select distinct order_status as order_item__order_status from ecommerce_dw.ods_orders",
           ("order_item__order_status",))
 
 

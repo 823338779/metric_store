@@ -1,13 +1,11 @@
--- 商品维度使用当前目录属性，在售状态不代表历史库存或历史在售快照。
+-- ODS 商品上架记录映射商品实体；仅保留源表实际提供的商品属性。
 select
-    product_key as product_id,
+    product_id,
     sku_code,
     product_name,
-    category_level1,
-    category_level2,
-    brand_name,
+    category as category_level1,
+    brand as brand_name,
     list_price,
     cost_price,
-    launched_date,
-    is_active
-from {{ source('ecommerce_dw', 'dim_product') }}
+    biz_date as launched_date
+from {{ source('ecommerce_dw', 'ods_products') }}

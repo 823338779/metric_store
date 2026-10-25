@@ -3,29 +3,27 @@ version: 2
 sources:
 - name: ecommerce_dw
   schema: ecommerce_dw
-  description: 现有电商数据仓库，只读源数据，不运行 seed。
+  description: 现有 ODS 电商演示数据，只读源数据，不运行 seed。
   tables:
-  - name: fact_orders
-    description: 真实订单头，一行一订单。
+  - name: ods_orders
+    description: ODS 订单头，一行一订单。
     columns:
     - name: order_id
       description: 源表唯一业务键。
       data_tests:
       - not_null
       - unique
-    - name: order_date
+    - name: biz_date
       description: 下单日期。
-    - name: customer_key
+    - name: customer_id
       description: 购买用户键。
-    - name: store_key
+    - name: store_id
       description: 所属店铺键。
     - name: sales_channel
       description: 销售渠道。
-    - name: payment_method
-      description: 支付方式。
     - name: order_status
       description: 当前订单状态。
-    - name: total_items
+    - name: total_quantity
       description: 订单商品件数。
     - name: gross_amount
       description: 折前商品金额，元。
@@ -33,10 +31,12 @@ sources:
       description: 优惠金额，元。
     - name: shipping_amount
       description: 运费，元。
+    - name: payable_amount
+      description: 订单折后应付总额，含运费，用于明细对账。
     - name: paid_amount
-      description: 订单折后含运费金额，非成交状态也可能有值。
-  - name: fact_order_items
-    description: 真实订单商品明细，一行一明细。
+      description: 原始成功支付金额，含运费，退款前口径；取消订单为零。
+  - name: ods_order_items
+    description: ODS 订单商品明细，一行一明细。
     columns:
     - name: order_item_id
       description: 源表唯一业务键。
@@ -49,50 +49,42 @@ sources:
       - not_null
       - relationships:
           arguments:
-            to: source('ecommerce_dw', 'fact_orders')
+            to: source('ecommerce_dw', 'ods_orders')
             field: order_id
-    - name: order_date
+    - name: biz_date
       description: 源明细下单日期。
-    - name: product_key
+    - name: product_id
       description: 商品键。
     - name: quantity
       description: 明细件数。
     - name: unit_price
       description: 明细单价，元。
-    - name: item_gross_amount
+    - name: gross_amount
       description: 明细折前金额，元。
-    - name: item_discount_amount
+    - name: discount_amount
       description: 明细优惠，元。
-    - name: item_paid_amount
-      description: 明细折后金额，元，不含运费。
-  - name: dim_customer
-    description: 当前用户维表。
+    - name: payable_amount
+      description: 明细折后应付金额，元，不含运费。
+  - name: ods_customers
+    description: ODS 客户注册表。
     columns:
-    - name: customer_key
+    - name: customer_id
       description: 源表唯一业务键。
       data_tests:
       - not_null
       - unique
-    - name: customer_code
-      description: 用户业务编号，不使用姓名识别分析结果。
-    - name: gender
-      description: 用户性别，按源值分组。
-    - name: age_group
-      description: 当前年龄分组。
     - name: member_level
-      description: 当前会员等级，不表示下单时的等级。
+      description: 注册时会员等级，不表示下单时的等级。
     - name: province
       description: 用户所在省份，与店铺省份独立。
-    - name: city
-      description: 用户所在城市，与店铺城市独立。
-    - name: register_date
+    - name: biz_date
       description: 用户注册日期，用户指标默认聚合时间。
     - name: acquisition_channel
       description: 用户首次获客渠道。
-  - name: dim_product
-    description: 当前商品维表。
+  - name: ods_products
+    description: ODS 商品上架表。
     columns:
-    - name: product_key
+    - name: product_id
       description: 源表唯一业务键。
       data_tests:
       - not_null
@@ -101,37 +93,27 @@ sources:
       description: 商品 SKU 编码。
     - name: product_name
       description: 当前商品名称。
-    - name: category_level1
+    - name: category
       description: 商品一级类目。
-    - name: category_level2
-      description: 商品二级类目。
-    - name: brand_name
+    - name: brand
       description: 商品品牌。
     - name: list_price
       description: 当前商品标价，单位元，不作为历史成交价。
     - name: cost_price
       description: 当前商品成本单价，单位元；不用于推算历史毛利。
-    - name: launched_date
+    - name: biz_date
       description: 商品首次上架日期，商品指标默认聚合时间。
-    - name: is_active
-      description: 当前是否在售：1 在售、0 不在售。
-  - name: dim_store
-    description: 当前店铺维表。
+  - name: ods_stores
+    description: ODS 商家入驻表。
     columns:
-    - name: store_key
+    - name: store_id
       description: 源表唯一业务键。
       data_tests:
       - not_null
       - unique
-    - name: store_code
-      description: 店铺业务编号。
     - name: store_name
       description: 店铺名称。
-    - name: store_type
-      description: 店铺经营类型。
     - name: province
       description: 店铺所在省份，与用户省份独立。
-    - name: city
-      description: 店铺所在城市，与用户城市独立。
-    - name: opened_date
+    - name: biz_date
       description: 店铺开店日期，店铺指标默认聚合时间。

@@ -1,10 +1,7 @@
--- 一行一家店铺；地域维度区分店铺所在地与用户所在地。
+-- ODS 入驻商家记录映射店铺实体；业务日期表示店铺开业日期。
 select
-    store_key as store_id,
-    store_code,
+    store_id,
     store_name,
-    store_type,
     province,
-    city,
-    opened_date
-from {{ source('ecommerce_dw', 'dim_store') }}
+    biz_date as opened_date
+from {{ source('ecommerce_dw', 'ods_stores') }}

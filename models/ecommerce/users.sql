@@ -1,12 +1,8 @@
--- 复用真实用户维表的当前属性；不复制姓名等个人信息到分析模型。
+-- ODS 客户注册记录映射用户实体；会员等级保留源表的注册时口径。
 select
-    customer_key as user_id,
-    customer_code as user_code,
-    gender,
-    age_group,
+    customer_id as user_id,
     member_level,
     province,
-    city,
-    register_date,
+    biz_date as register_date,
     acquisition_channel
-from {{ source('ecommerce_dw', 'dim_customer') }}
+from {{ source('ecommerce_dw', 'ods_customers') }}

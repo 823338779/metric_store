@@ -1,4 +1,4 @@
-"""校验电商四模型契约，并将真实 MetricFlow 查询与源数据 SQL 对账。"""
+"""校验电商模型契约，并将真实 MetricFlow 查询与源数据 SQL 对账。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,13 @@ from decimal import Decimal
 from pathlib import Path
 
 # 固定公开模型和指标集合，禁止残留旧模拟业务或额外语义模型。
-MODELS = {"orders", "users", "products", "stores"}
+MODELS = {"orders", "users", "products", "stores", "refunds", "store_directory"}
 METRICS = {
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
     "buyer_count", "average_order_value", "user_count", "new_user_count",
     "product_count", "store_count", "new_store_count",
+    "completed_gross_amount", "completed_discount_amount", "discount_rate", "units_per_order",
+    "average_selling_price", "selling_store_count", "successful_refund_amount",
 }
 ORDER_METRICS = (
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
@@ -82,7 +84,7 @@ def verify_manifest(path: Path) -> None:
     assert models == MODELS, f"语义模型不符：{models}"
     assert metrics == METRICS, f"指标不符：{metrics}"
     assert not any(node["resource_type"] == "seed" for node in manifest["nodes"].values())
-    print("PASS: 四个语义模型、十一个指标，无 seed")
+    print(f"PASS: {len(models)} 个语义模型、{len(metrics)} 个指标，无 seed")
 
 
 def compare_tables(actual, expected, columns: tuple[str, ...], name: str) -> None:
@@ -115,6 +117,8 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     from metricflow.sql.render.duckdb_renderer import DuckDbSqlPlanRenderer
     from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
     from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
+    from metricflow_semantics.specs.bound_group_by_parameter import BoundGroupByParameter, MetricGroupByBinding
+    from metricflow_semantics.specs.query_param_implementations import DimensionOrEntityParameter, TimeDimensionParameter
 
     # 上游 CLI 未枚举 StarRocks；验收与现有服务一样使用标准聚合渲染及 dbt adapter 执行。
     class ValidationSqlClient(AdapterBackedSqlClient):
@@ -178,6 +182,57 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
           query_type=MetricFlowQueryType.DIMENSION_VALUES),
           "select distinct order_status as order_item__order_status from ecommerce_dw.ods_orders",
           ("order_item__order_status",))
+
+    # 独立聚合两个事实后按月、省对齐，包含仅一侧有记录的组合。
+    sales, refunds = "sales_amount", "successful_refund_amount"
+    province = BoundGroupByParameter("province", (
+        MetricGroupByBinding(sales, DimensionOrEntityParameter("user__province")),
+        MetricGroupByBinding(refunds, DimensionOrEntityParameter("store__province")),
+    ))
+    period = BoundGroupByParameter("period", (
+        MetricGroupByBinding(sales, TimeDimensionParameter("order_item__order_date", grain="month")),
+        MetricGroupByBinding(refunds, TimeDimensionParameter("refund__refund_date", grain="month")),
+    ))
+    regional_sql = """
+    select period, province, sum(sales_amount) as sales_amount,
+           sum(successful_refund_amount) as successful_refund_amount
+    from (
+      select date_trunc('month', o.biz_date) as period, u.province,
+             sum(case when o.order_status = 'COMPLETED' then i.payable_amount else 0 end) as sales_amount,
+             null as successful_refund_amount
+      from ecommerce_dw.ods_order_items i join ecommerce_dw.ods_orders o on i.order_id = o.order_id
+      join ecommerce_dw.ods_customers u on o.customer_id = u.customer_id group by 1, 2
+      union all
+      select date_trunc('month', cast(r.refunded_at as date)), s.province, null,
+             sum(case when r.refund_status = 'SUCCESS' then r.refund_amount else 0 end)
+      from ecommerce_dw.ods_refunds r join ecommerce_dw.ods_orders o on r.order_id = o.order_id
+      join ecommerce_dw.ods_stores s on o.store_id = s.store_id group by 1, 2
+    ) flows group by period, province
+    """
+    check("跨事实月度区域经营", request(metric_names=[sales, refunds], bound_group_by=(period, province)),
+          regional_sql, ("period", "province", sales, refunds))
+
+    # 相同店铺维度在普通查询中显示名称，绑定查询中保留原始 ID。
+    store_path = "store__store_code"
+    store_sales = """select {key} as {column}, sum(case when o.order_status = 'COMPLETED'
+        then i.payable_amount else 0 end) as sales_amount """ + ORDER_FROM + " group by s.store_id, s.store_name"
+    check("店铺名称映射", request(metric_names=[sales], group_by_names=[store_path]),
+          store_sales.format(key="coalesce(s.store_name, cast(s.store_id as varchar))", column=store_path),
+          (store_path, sales))
+    store_binding = BoundGroupByParameter("shop", (MetricGroupByBinding(sales, DimensionOrEntityParameter(store_path)),))
+    check("绑定保留原始店铺键", request(metric_names=[sales], bound_group_by=(store_binding,)),
+          store_sales.format(key="s.store_id", column="shop"), ("shop", sales))
+
+    # 用订单头全量基准核验商品明细上的金额、去重与加权比率。
+    pricing_sql = """select sum(gross_amount) as completed_gross_amount,
+        sum(discount_amount) as completed_discount_amount,
+        sum(discount_amount) / nullif(sum(gross_amount), 0) as discount_rate,
+        sum(total_quantity) / nullif(count(distinct order_id), 0) as units_per_order,
+        sum(payable_amount - shipping_amount) / nullif(sum(total_quantity), 0) as average_selling_price,
+        count(distinct store_id) as selling_store_count from ecommerce_dw.ods_orders where order_status = 'COMPLETED'"""
+    pricing_metrics = ("completed_gross_amount", "completed_discount_amount", "discount_rate",
+                       "units_per_order", "average_selling_price", "selling_store_count")
+    check("折扣、件价和动销", request(metric_names=list(pricing_metrics)), pricing_sql, pricing_metrics)
 
 
 def main() -> None:

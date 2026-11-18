@@ -1,0 +1,37 @@
+version: 2
+models:
+- name: refunds
+  description: 售后事实，一行一笔退款，多笔退款分别计入发生期。
+  semantic_model:
+    enabled: true
+  agg_time_dimension: refund_date
+  columns:
+  - name: refund_id
+    description: 单笔退款的唯一编号。
+    entity: {name: refund, type: primary}
+    data_tests: [not_null, unique]
+  - name: refund_date
+    description: 退款流水 refunded_at 对应的自然日。
+    dimension: {type: time}
+    granularity: day
+    data_tests: [not_null]
+  - name: user_id
+    description: 原订单买家，用于按买家属性分析退款。
+    entity: {name: user, type: foreign}
+    data_tests: [not_null]
+  - name: store_id
+    description: 原订单店铺，用于按经营主体分析退款。
+    entity: {name: store, type: foreign}
+    data_tests: [not_null]
+  - name: refund_status
+    description: 退款流水状态，SUCCESS 表示退款成功。
+  - name: refund_amount
+    description: 本笔流水登记的退款金额，元。
+  # 按发生时间汇总成功退款，可与其他事实按各自业务日期对齐。
+  metrics:
+  - name: successful_refund_amount
+    label: 成功退款金额
+    description: SUCCESS 流水的退款金额之和，按退款发生日归属。
+    type: simple
+    agg: sum
+    expr: case when refund_status = 'SUCCESS' then refund_amount else 0 end

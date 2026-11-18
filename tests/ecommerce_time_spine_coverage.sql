@@ -1,4 +1,4 @@
--- 骨架必须连续，且覆盖四种业务日期；不依赖只覆盖订单期间的源日期表。
+-- 骨架必须连续，并覆盖订单、用户、商品、店铺和退款的业务日期。
 with business_dates as (
     select order_date as business_day from {{ ref('orders') }}
     union all
@@ -7,6 +7,8 @@ with business_dates as (
     select launched_date from {{ ref('products') }}
     union all
     select opened_date from {{ ref('stores') }}
+    union all
+    select refund_date from {{ ref('refunds') }}
 ), bounds as (
     select min(business_day) as first_day, max(business_day) as last_day from business_dates
 ), calendar as (

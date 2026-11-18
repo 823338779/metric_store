@@ -130,6 +130,25 @@ models:
     type: simple
     agg: count_distinct
     expr: case when is_completed = 1 then user_id else null end
+  # 折前金额和优惠额沿用成交状态与明细粒度，支持类目、渠道、店铺联合分析。
+  - name: completed_gross_amount
+    label: 成交折前商品额
+    description: 成交明细折前金额之和，单位元，不含运费。
+    type: simple
+    agg: sum
+    expr: case when is_completed = 1 then item_gross_amount else 0 end
+  - name: completed_discount_amount
+    label: 成交商品优惠额
+    description: 成交明细优惠金额之和，单位元，归属于下单日期。
+    type: simple
+    agg: sum
+    expr: case when is_completed = 1 then item_discount_amount else 0 end
+  - name: selling_store_count
+    label: 动销店铺数
+    description: 所选期间和商品范围内至少有一笔成交的店铺去重数。
+    type: simple
+    agg: count_distinct
+    expr: case when is_completed = 1 then store_id else null end
 - name: users
   description: 用户语义模型：一行一条客户注册记录，会员等级为注册时属性。
   semantic_model:
@@ -242,6 +261,15 @@ models:
     description: 店铺名称。
     dimension:
       type: categorical
+  # 经营报表按唯一店铺键计算，查询结果通过展示模型取得当前名称。
+  - name: store_code
+    description: 店铺经营分析键，普通分组显示店铺名称，同名店铺分别统计。
+    dimension:
+      type: categorical
+      value_mapping:
+        semantic_model: store_directory
+        value_dimension: raw_store_id
+        display_dimension: display_name
   - name: province
     description: 店铺所在省份，与用户省份独立。
     dimension:
@@ -274,3 +302,25 @@ metrics:
   type_params:
     numerator: sales_amount
     denominator: completed_order_count
+# 先汇总当前分组的分子、分母再计算比率，保留零分母的 NULL。
+- name: discount_rate
+  label: 成交折扣率（优惠占比）
+  description: 成交优惠额除以成交折前商品额，0.1 表示优惠 10%。
+  type: ratio
+  type_params:
+    numerator: completed_discount_amount
+    denominator: completed_gross_amount
+- name: units_per_order
+  label: 成交件单量
+  description: 分组内成交件数除以含该组商品的成交订单数，单位件/单。
+  type: ratio
+  type_params:
+    numerator: sales_quantity
+    denominator: completed_order_count
+- name: average_selling_price
+  label: 件均成交价
+  description: 成交商品金额除以成交件数，单位元/件，不含运费。
+  type: ratio
+  type_params:
+    numerator: sales_amount
+    denominator: sales_quantity

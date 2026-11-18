@@ -1,0 +1,21 @@
+version: 2
+models:
+- name: store_directory
+  description: 店铺展示字典，每个店铺键对应一条入驻记录。
+  semantic_model:
+    enabled: true
+  columns:
+  - name: raw_store_id
+    description: 与店铺维度 store_code 同类型的唯一映射键。
+    entity:
+      name: directory_entry
+      type: primary
+    dimension:
+      type: categorical
+    data_tests:
+    - unique
+    - not_null
+  - name: display_name
+    description: 经营报表使用的当前店铺名称，允许不同店铺重名。
+    dimension:
+      type: categorical

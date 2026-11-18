@@ -5,6 +5,9 @@ sources:
   schema: ecommerce_dw
   description: 现有 ODS 电商演示数据，只读源数据，不运行 seed。
   tables:
+  # 售后金额由退款流水提供，每笔退款只读取一次。
+  - name: ods_refunds
+    description: 退款流水，refund_id 唯一，order_id 关联订单头。
   - name: ods_orders
     description: ODS 订单头，一行一订单。
     columns:

@@ -1,4 +1,4 @@
--- 四个业务日期共同决定边界，注册和开店早于订单也不会被遗漏。
+-- 所有业务日期共同决定边界，覆盖注册、开店及订单之后发生的退款。
 with business_bounds as (
     select min(order_date) as first_day, max(order_date) as last_day from {{ ref('orders') }}
     union all
@@ -7,6 +7,8 @@ with business_bounds as (
     select min(launched_date), max(launched_date) from {{ ref('products') }}
     union all
     select min(opened_date), max(opened_date) from {{ ref('stores') }}
+    union all
+    select min(refund_date), max(refund_date) from {{ ref('refunds') }}
 ), calendar_bounds as (
     select min(first_day) as first_day, max(last_day) as last_day from business_bounds
 )

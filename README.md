@@ -4,10 +4,12 @@
 
 ## 数据来源与模型
 
-[源定义](models/ecommerce/sources.yml)声明五张 ODS 源表，[语义定义](models/ecommerce/schema.yml)包含四个语义模型。
+[源定义](models/ecommerce/sources.yml)声明六张 ODS 源表。订单、用户、商品和店铺的[语义定义](models/ecommerce/schema.yml)与退款、展示字典共同组成以下模型。
 
 | 语义模型 | 数据源 | 粒度与关联 |
 | --- | --- | --- |
+| refunds | ods_refunds + ods_orders | 一笔退款流水，通过订单头取得用户、店铺；按实际退款日期归属 |
+| store_directory | ods_stores | 每个店铺 ID 一行，提供当前展示名称 |
 | orders | ods_order_items + ods_orders | 一条订单商品明细；order_item_id 唯一，order_id 允许重复 |
 | users | ods_customers | 一个用户；user_id 唯一 |
 | products | ods_products | 一个商品；product_id 唯一 |
@@ -17,7 +19,7 @@
 
 订单头只补充下单日期、用户、店铺、状态和渠道，金额与件数只取明细。禁止把订单总额复制到明细后求和。
 
-另有一个非语义物理模型 `time_spine`，按四种业务日期的最小/最大值生成连续自然日。日期范围直接来自 ODS 映射后的业务模型，不依赖独立日期源表。日期偏移使用 StarRocks 的 [generate_series](https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/)（要求 StarRocks 3.1+），没有固定业务日期或 seed。
+另有一个非语义物理模型 `time_spine`，按五种业务日期的最小/最大值生成连续自然日。日期范围直接来自 ODS 映射后的业务模型，不依赖独立日期源表。日期偏移使用 StarRocks 的 [generate_series](https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/)（要求 StarRocks 3.1+），没有固定业务日期或 seed。
 
 ## 指标口径
 
@@ -34,8 +36,28 @@
 | product_count | 商品数 | 商品 ID 去重数 |
 | store_count | 店铺数 | 店铺 ID 去重数 |
 | new_store_count | 新开店铺数 | 以开店日期为时间轴统计店铺 ID 去重数 |
+| completed_gross_amount | 成交折前商品额 | 成交商品明细折前金额，元 |
+| completed_discount_amount | 成交商品优惠额 | 成交商品明细优惠金额，元 |
+| discount_rate | 成交折扣率（优惠占比） | 成交优惠额 ÷ 成交折前商品额 |
+| units_per_order | 成交件单量 | 成交件数 ÷ 成交订单数 |
+| average_selling_price | 件均成交价 | 成交商品金额 ÷ 成交件数 |
+| selling_store_count | 动销店铺数 | 所选期间和商品范围内有成交的店铺去重数 |
+| successful_refund_amount | 成功退款金额 | 成功流水按 refunded_at 归属，金额单位元 |
 
-**成交按当前状态定义，只认 `COMPLETED`。** `CANCELLED` 和 `REFUNDED` 即使金额字段非零也不计入成交；这不是支付流水净收入，也不单独统计退款现金流。成交时间归属于下单日期，不冒认支付完成时间。
+## 月度区域经营与店铺复盘
+
+区域经营月报同时看本省用户贡献的成交额和本省店铺发生的退款额。使用以下两个公共分组，按完整的月份、省份组合对齐；仅一侧有记录时保留该行，另一侧金额为 NULL。
+
+| 查询输出 | sales_amount | successful_refund_amount |
+| --- | --- | --- |
+| period | order_item__order_date，month | refund__refund_date，month |
+| province | user__province | store__province |
+
+两列分别反映买家侧成交和商家侧退款，日期、归属角色及金额口径各异，不能直接相减作为净收入。渠道运营和商品团队可以按类目、品牌、渠道复用折扣、件价和动销指标。件单量乘以件均成交价可与同一分组内的客单价核对。
+
+店铺复盘使用同一维度 `store__store_code`。普通查询按店铺 ID 汇总后显示店名；绑定查询返回原始 ID，方便上下游按稳定键对齐。两种模式均使用源表对账，可执行查询见[验收脚本](scripts/verify_ecommerce.py)。
+
+**成交按当前状态定义，只认 `COMPLETED`。** `CANCELLED` 和 `REFUNDED` 即使金额字段非零也不计入成交；这不是支付流水净收入；成功退款额由独立退款流水提供。成交时间归属于下单日期，不冒认支付完成时间。
 
 订单和购买人数是去重指标，不能将各商品或各月份分组的结果直接相加当作总体。按商品或类目查询客单价时，分子只包含该商品分组金额，分母为包含该组商品的成交订单数；它不是这些订单的完整客单价。
 
@@ -48,9 +70,9 @@
 - 商品：`product__sku_code`、`product__product_name`、`product__category_level1`、`product__brand_name`、`product__launched_date`。
 - 店铺：`store__store_name`、`store__province`、`store__opened_date`。
 
-时间分组使用 `metric_time__day`、`metric_time__month` 等引擎支持的粒度。六个订单指标可以组合三个维表的维度；用户数仅按用户模型可达维度分析，商品数和店铺数同理，不通过反向一对多关联制造可用维度。用户省份与店铺省份名称相同但实体路径不同。
+时间分组使用 `metric_time__day`、`metric_time__month` 等引擎支持的粒度。订单指标可以组合三个维表的维度；用户数仅按用户模型可达维度分析，商品数和店铺数同理，不通过反向一对多关联制造可用维度。用户省份与店铺省份名称相同但实体路径不同。
 
-维度保留源值，不额外制造显示字典。通过服务查询时，先按当前 buildId 和指标集合发现可用维度，再使用返回的 optionId，不能跨构建复用。
+店铺经营维度 `store__store_code` 按店铺 ID 分组，通过 `store_directory` 映射到当前店名。同名店铺保留各自的结果行。绑定查询及筛选使用原始键。通过服务查询时，先按当前 buildId 和指标集合发现可用维度，再使用返回的 optionId，不能跨构建复用。
 
 ## 本地构建与验收
 
@@ -90,9 +112,9 @@ if ($LASTEXITCODE -ne 0) { throw '电商模型构建失败' }
 if ($LASTEXITCODE -ne 0) { throw '电商指标验收失败' }
 ```
 
-构建包含 **5 个物理模型、43 项数据测试、4 个语义模型、11 个指标**。测试覆盖源主键/外键、明细唯一性、三个实体关系、金额/件数逐单对账、维表数量和时间骨架连续性。
+构建包含 **7 个物理模型、50 项数据测试、6 个语义模型、18 个指标**。测试覆盖源主键/外键、明细唯一性、三个实体关系、金额/件数逐单对账、维表数量和时间骨架连续性。
 
-验收脚本先检查实际 manifest，无 profile 时只检查模型/指标/无 seed 契约。提供 profile 后执行 14 组真实查询及对应 EXPLAIN SQL，与源表独立查询逐行比较：订单头总额、三个维表计数、非成交状态与零分母、商品类目品牌、用户会员、店铺省份、双省份路径、三维表组合、按月成交、原码筛选、2020 年注册月份和维值查询。金额允许浮点级误差，不放宽到业务金额差额。
+验收脚本先检查实际 manifest，无 profile 时只检查模型/指标/无 seed 契约。提供 profile 后执行 18 组真实查询及对应 EXPLAIN SQL，与源表独立查询逐行比较：订单头总额、三个维表计数、非成交状态与零分母、商品类目品牌、用户会员、店铺省份、双省份路径、三维表组合、按月成交、原码筛选、2020 年注册月份和维值查询。金额允许浮点级误差，不放宽到业务金额差额。
 
 原生 MetricFlow CLI 尚不支持 StarRocks 枚举；验收脚本使用与现有服务相同的 DuckDB SQL renderer 和 dbt-starrocks adapter，只验证这里实际执行的聚合/时间 SQL。脚本不导入相邻服务实现类。执行完成后可清理自己创建的临时目录；数据库验收 schema 由执行者按保留需求管理。
 

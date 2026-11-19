@@ -9,6 +9,11 @@ select
     o.biz_date as order_date,
     o.order_status,
     o.sales_channel,
+    -- 在唯一订单头判档，商品筛选不会改变整单金额。
+    case when o.payable_amount - o.shipping_amount is null then 'unknown'
+         when o.payable_amount - o.shipping_amount < 100 then 'under_100'
+         when o.payable_amount - o.shipping_amount < 500 then '100_to_under_500'
+         else '500_plus' end as order_value_band,
     i.quantity,
     i.unit_price,
     i.gross_amount as item_gross_amount,

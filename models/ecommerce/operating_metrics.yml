@@ -1,0 +1,119 @@
+version: 2
+
+metrics:
+- name: high_value_vs_deep_discount_sales_gap
+  label: 高额明细与深折明细成交额差额
+  description: 500 元及以上明细成交额减去优惠占比至少 20% 的明细成交额，同一明细可进入两侧。两侧均有记录时计算差额。
+  type: derived
+  expr: high_value_sales - deep_discount_sales
+  input_metrics:
+  - name: sales_amount
+    alias: high_value_sales
+    filter: "{{ Dimension('order_item__item_value_band') }} = '500_plus'"
+  - name: sales_amount
+    alias: deep_discount_sales
+    filter: "{{ Dimension('order_item__item_discount_band') }} = '20pct_plus'"
+
+- name: sales_above_target
+  label: 超目标成交额
+  description: 在每个查询分组内先汇总成交额，再计算超出固定目标 10000 元的部分。按店铺和月分组即为店月超额。
+  type: derived
+  expr: case when sales_amount > 10000 then sales_amount - 10000 else 0 end
+  input_metrics:
+  - name: sales_amount
+
+- name: high_value_discounted_order_share
+  label: 高额明细成交订单深折占比
+  description: 含高额明细的成交订单中，至少一条高额明细同时享受深折的订单占比。两侧各自按订单去重。
+  type: ratio
+  filter: "{{ Dimension('order_item__item_value_band') }} = '500_plus'"
+  numerator:
+    name: completed_order_count
+    alias: deep_discount_order_count
+    filter: "{{ Dimension('order_item__item_discount_band') }} = '20pct_plus'"
+  denominator: completed_order_count
+
+- name: refund_to_sales_amount_ratio
+  label: 发生期退款成交金额比
+  description: 成功退款额按退款日汇总，成交商品额按下单日汇总，再按共同期间及店铺等维度对齐相除。退款可来自以前期间。
+  type: ratio
+  numerator: successful_refund_amount
+  denominator: sales_amount
+
+- name: sales_mtd
+  label: 月初至今成交额
+  description: 按日查询，自当月首日至当日累计成交商品金额，每月重新开始。
+  type: cumulative
+  input_metric: sales_amount
+  grain_to_date: month
+
+- name: sales_wow_growth
+  label: 成交额周环比增长率
+  description: 按周查询，本周与前一自然周成交额之差除以前周成交额。前周缺失或为零时返回空值。
+  type: derived
+  expr: (sales_amount - prior_week_sales) * 1.0 / nullif(prior_week_sales, 0)
+  input_metrics:
+  - name: sales_amount
+  - name: sales_amount
+    alias: prior_week_sales
+    offset_window: 1 week
+
+- name: rolling_7d_buyers
+  label: 近七日成交买家数
+  description: 按日查询，统计当日及之前六天成交的不同买家。
+  type: cumulative
+  input_metric: buyer_count
+  window: 7 days
+
+- name: matched_registration_purchase_7d
+  hidden: true
+  label: 注册七日成交匹配比率
+  description: 按注册时间归属，匹配同一买家七日窗口内的成交订单创建事件。
+  type: conversion
+  entity: user
+  calculation: conversion_rate
+  base_metric: registration_events
+  conversion_metric: purchase_event_count
+  window: 7 days
+
+- name: matched_same_product_purchase_7d
+  hidden: true
+  label: 浏览后七日同商品购买匹配比率
+  description: 按用户商品首次浏览归属，统计其后七日内至少购买一次同款的比例。窗口含起点、不含第七日同一时刻。
+  type: conversion
+  entity: user
+  calculation: conversion_rate
+  base_metric: product_view_events
+  conversion_metric: product_purchase_events
+  window: 7 days
+  constant_properties:
+  - {base_property: product, conversion_property: product}
+
+# 无人转化时引擎缺少匹配侧分组；有观察对象的批次应显示 0%。
+- name: registration_purchase_7d
+  label: 注册七日成交转化率
+  description: 按注册批次统计七日内首购人数占比，有注册且无人转化时为零。
+  type: derived
+  expr: case when registration_events > 0 then coalesce(matched_registration_purchase_7d, 0) end
+  input_metrics:
+  - name: registration_events
+  - name: matched_registration_purchase_7d
+
+- name: same_product_purchase_7d
+  label: 浏览后七日同商品购买转化率
+  description: 按首次浏览批次统计七日内购买同款的用户商品组合占比，有浏览且无人转化时为零。
+  type: derived
+  expr: case when product_view_events > 0 then coalesce(matched_same_product_purchase_7d, 0) end
+  input_metrics:
+  - name: product_view_events
+  - name: matched_same_product_purchase_7d
+
+- name: confirmed_refund_to_sales_ratio
+  label: 已确认期间退款成交金额比
+  description: 全渠道汇总；包含未确认日或成交额为零时为空，已确认无退款且有成交时为零。
+  type: derived
+  expr: case when unconfirmed_days = 0 then reporting_refunds * 1.0 / nullif(reporting_sales, 0) end
+  input_metrics:
+  - name: unconfirmed_days
+  - name: reporting_sales
+  - name: reporting_refunds

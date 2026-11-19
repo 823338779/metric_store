@@ -4,5 +4,6 @@ select
     member_level,
     province,
     biz_date as register_date,
+    registered_at,
     acquisition_channel
 from {{ source('ecommerce_dw', 'ods_customers') }}

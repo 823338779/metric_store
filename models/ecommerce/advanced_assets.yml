@@ -1,0 +1,104 @@
+version: 2
+models:
+- name: stock_snapshots
+  description: 每日店铺商品库存。
+  semantic_model: {enabled: true}
+  agg_time_dimension: stock_date
+  columns:
+  - name: snapshot_id
+    entity: {type: primary, name: stock_snapshot}
+  - name: stock_position
+    entity: {type: foreign, name: stock_position}
+  - name: store_id
+    entity: {type: foreign, name: store}
+  - name: product_id
+    entity: {type: foreign, name: product}
+  - name: stock_date
+    dimension: {type: time}
+    granularity: day
+  metrics:
+  - name: period_closing_stock
+    label: 期内末次库存合计
+    description: 每个店铺商品在所选期间取各自最后一次观测的期末件数后求和。
+    type: simple
+    agg: sum
+    expr: closing_quantity
+    non_additive_dimension:
+      name: stock_date
+      window_agg: max
+      group_by: [stock_position]
+- name: spend_stage_history
+  primary_entity: spend_stage_version
+  description: 客户按日初历史成交阶段划分的有效期，左闭右开。
+  semantic_model: {enabled: true}
+  columns:
+  - name: user_id
+    entity: {type: natural, name: buyer_history}
+  - name: valid_from
+    dimension: {type: time, validity_params: {is_start: true}}
+    granularity: day
+  - name: valid_to
+    dimension: {type: time, validity_params: {is_end: true}}
+    granularity: day
+  - name: spend_stage
+    dimension: {type: categorical}
+- name: daily_refund_reporting
+  description: 全渠道日历日退款对账，完整性由上游确认的日期区间决定。
+  semantic_model: {enabled: true}
+  agg_time_dimension: date_day
+  columns:
+  - name: date_day
+    dimension: {type: time}
+    granularity: day
+  derived_semantics:
+    entities:
+    - {name: reporting_day, type: primary, expr: date_day}
+  metrics:
+  - {name: reporting_sales, label: 对账成交额, type: simple, agg: sum, expr: sales}
+  - {name: reporting_refunds, label: 已观测退款额, type: simple, agg: sum, expr: observed_refunds}
+  - {name: unconfirmed_days, label: 退款未确认天数, type: simple, agg: sum, expr: unconfirmed}
+- name: product_views
+  description: 每个用户和商品组合最早的一次浏览。
+  semantic_model: {enabled: true}
+  agg_time_dimension: event_time
+  columns:
+  - name: event_id
+    entity: {name: product_view, type: primary}
+  - name: user_id
+    entity: {name: user, type: foreign}
+  - name: product_id
+    entity: {name: product, type: foreign}
+  - name: event_time
+    dimension: {type: time}
+    granularity: second
+  metrics:
+  - {name: product_view_events, label: 首次浏览用户商品组合数, type: simple, agg: count, expr: event_id}
+- name: product_purchases
+  description: 每个用户和商品组合首次浏览后最早的一次购买。
+  semantic_model: {enabled: true}
+  agg_time_dimension: event_time
+  columns:
+  - name: event_id
+    entity: {name: product_purchase, type: primary}
+  - name: user_id
+    entity: {name: user, type: foreign}
+  - name: product_id
+    entity: {name: product, type: foreign}
+  - name: event_time
+    dimension: {type: time}
+    granularity: second
+  metrics:
+  - {name: product_purchase_events, label: 浏览后购买用户商品组合数, type: simple, agg: count, expr: event_id}
+- name: completed_purchases
+  description: 每位用户注册后首笔成交订单的创建时间。
+  semantic_model: {enabled: true}
+  agg_time_dimension: created_at
+  primary_entity: completed_purchase
+  columns:
+  - name: user_id
+    entity: {name: user, type: foreign}
+  - name: created_at
+    dimension: {type: time}
+    granularity: second
+  metrics:
+  - {name: purchase_event_count, label: 注册后首购用户数, type: simple, agg: count, expr: user_id}

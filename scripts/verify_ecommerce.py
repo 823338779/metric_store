@@ -12,12 +12,21 @@ from pathlib import Path
 
 # 固定公开模型和指标集合，禁止残留旧模拟业务或额外语义模型。
 MODELS = {"orders", "users", "products", "stores", "refunds", "store_directory"}
+MODELS.update({"stock_snapshots", "spend_stage_history", "daily_refund_reporting",
+               "product_views", "product_purchases", "completed_purchases"})
 METRICS = {
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
     "buyer_count", "average_order_value", "user_count", "new_user_count",
     "product_count", "store_count", "new_store_count",
     "completed_gross_amount", "completed_discount_amount", "discount_rate", "units_per_order",
     "average_selling_price", "selling_store_count", "successful_refund_amount",
+    "high_value_vs_deep_discount_sales_gap", "sales_above_target", "high_value_discounted_order_share",
+    "refund_to_sales_amount_ratio", "sales_mtd", "sales_wow_growth",
+    "high_spend_user_count", "registration_events", "period_closing_stock", "reporting_sales",
+    "reporting_refunds", "unconfirmed_days", "product_view_events", "product_purchase_events",
+    "purchase_event_count", "rolling_7d_buyers", "registration_purchase_7d", "same_product_purchase_7d",
+    "confirmed_refund_to_sales_ratio",
+    "matched_registration_purchase_7d", "matched_same_product_purchase_7d",
 }
 ORDER_METRICS = (
     "order_count", "completed_order_count", "sales_amount", "sales_quantity",
@@ -114,18 +123,27 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     from dbt_metricflow.cli.dbt_connectors.adapter_backed_client import AdapterBackedSqlClient
     from metricflow.engine.metricflow_engine import MetricFlowEngine, MetricFlowQueryRequest, MetricFlowQueryType
     from metricflow.protocols.sql_client import SqlEngine
-    from metricflow.sql.render.duckdb_renderer import DuckDbSqlPlanRenderer
+    from metricflow.sql.render.duckdb_renderer import DuckDbSqlExpressionRenderer, DuckDbSqlPlanRenderer
+    from metricflow.sql.render.expr_renderer import SqlExpressionRenderResult
+    from metricflow_semantics.sql.sql_bind_parameters import SqlBindParameterSet
     from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
     from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
     from metricflow_semantics.specs.bound_group_by_parameter import BoundGroupByParameter, MetricGroupByBinding
     from metricflow_semantics.specs.query_param_implementations import DimensionOrEntityParameter, TimeDimensionParameter
 
-    # 上游 CLI 未枚举 StarRocks；验收与现有服务一样使用标准聚合渲染及 dbt adapter 执行。
+    # 与服务适配器一致：漏斗事件的临时标识使用 StarRocks 原生 UUID。
+    class ValidationExpressions(DuckDbSqlExpressionRenderer):
+        def visit_generate_uuid_expr(self, node):
+            return SqlExpressionRenderResult(sql="UUID()", bind_parameter_set=SqlBindParameterSet())
+
+    class ValidationRenderer(DuckDbSqlPlanRenderer):
+        EXPR_RENDERER = ValidationExpressions()
+
     class ValidationSqlClient(AdapterBackedSqlClient):
         def __init__(self, adapter):
             self._adapter = adapter
             self._sql_engine_type = SqlEngine.DUCKDB
-            self._sql_plan_renderer = DuckDbSqlPlanRenderer()
+            self._sql_plan_renderer = ValidationRenderer()
 
     os.environ[TARGET_ENV] = str(manifest.resolve().parent)
     configuration = CLIConfiguration()
@@ -152,6 +170,13 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
 
     # 总额基准来自订单头，独立于模型的明细聚合，能发现一单多商品导致的扇出。
     check("订单全部指标与订单头对账", request(metric_names=list(ORDER_METRICS)), HEADER_SQL, ORDER_METRICS)
+    # 分子和分母引用同一成交订单指标；独立对账可发现筛选错误地作用于两侧。
+    share = "high_value_discounted_order_share"
+    share_sql = """select count(distinct case when i.gross_amount > 0
+        and i.discount_amount >= i.gross_amount * 0.2 then o.order_id end)
+        / nullif(count(distinct o.order_id), 0) as high_value_discounted_order_share
+        """ + ORDER_FROM + " where o.order_status = 'COMPLETED' and i.payable_amount >= 500"
+    check("高额明细成交订单深折占比", request(metric_names=[share]), share_sql, (share,))
     for name, metrics, sql in (
         ("用户总数", ("user_count", "new_user_count"), USER_SQL),
         ("商品总数", ("product_count",), PRODUCT_SQL),
@@ -233,6 +258,36 @@ def verify_queries(profiles: Path, manifest: Path) -> None:
     pricing_metrics = ("completed_gross_amount", "completed_discount_amount", "discount_rate",
                        "units_per_order", "average_selling_price", "selling_store_count")
     check("折扣、件价和动销", request(metric_names=list(pricing_metrics)), pricing_sql, pricing_metrics)
+
+    # 使用时间范围连接独立重算两个漏斗，每个观察对象仅贡献一次。
+    registration_sql = """select date_trunc('month', c.registered_at) as metric_time__month,
+        count(distinct o.customer_id) / count(distinct c.customer_id) as registration_purchase_7d
+        from ecommerce_dw.ods_customers c left join ecommerce_dw.ods_orders o
+        on o.customer_id = c.customer_id and o.order_status = 'COMPLETED'
+        and o.created_at >= c.registered_at and o.created_at < c.registered_at + interval 7 day
+        group by date_trunc('month', c.registered_at)"""
+    view_sql = """with views as (
+        select customer_id, product_id, min(event_time) as first_view from ecommerce_dw.ods_user_events
+        where event_type = 'VIEW' group by customer_id, product_id
+        ), outcomes as (
+        select v.customer_id, v.product_id, v.first_view, count(p.event_id) as matches
+        from views v left join ecommerce_dw.ods_user_events p
+        on p.customer_id = v.customer_id and p.product_id = v.product_id and p.event_type = 'PURCHASE'
+        and p.event_time >= v.first_view and p.event_time < v.first_view + interval 7 day
+        group by v.customer_id, v.product_id, v.first_view)
+        select date_trunc('month', first_view) as metric_time__month,
+        sum(case when matches > 0 then 1 else 0 end) / count(*) as same_product_purchase_7d
+        from outcomes group by date_trunc('month', first_view)"""
+    stock_sql = """select date_trunc('month', biz_date) as metric_time__month,
+        sum(closing_quantity) as period_closing_stock from (
+        select biz_date, closing_quantity, row_number() over (
+        partition by store_id, product_id, date_trunc('month', biz_date) order by biz_date desc) as recency
+        from ecommerce_dw.ods_inventory_daily) ranked
+        where recency = 1 group by date_trunc('month', biz_date)"""
+    for metric, sql in (("registration_purchase_7d", registration_sql),
+                        ("same_product_purchase_7d", view_sql), ("period_closing_stock", stock_sql)):
+        check(metric, request(metric_names=[metric], group_by_names=["metric_time__month"]),
+              sql, ("metric_time__month", metric))
 
 
 def main() -> None:

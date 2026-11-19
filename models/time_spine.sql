@@ -9,6 +9,10 @@ with business_bounds as (
     select min(opened_date), max(opened_date) from {{ ref('stores') }}
     union all
     select min(refund_date), max(refund_date) from {{ ref('refunds') }}
+    union all
+    select min(stock_date), max(stock_date) from {{ ref('stock_snapshots') }}
+    union all
+    select min(cast(event_time as date)), max(cast(event_time as date)) from {{ source('ecommerce_dw', 'ods_user_events') }}
 ), calendar_bounds as (
     select min(first_day) as first_day, max(last_day) as last_day from business_bounds
 )

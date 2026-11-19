@@ -3,6 +3,9 @@ version: '1.0.0'
 config-version: 2
 profile: ecommerce_metrics
 model-paths: [models]
+# dbt 1.12 also populates the legacy field for v2 window definitions.
+flags:
+  require_nested_cumulative_type_params: false
 
 models:
   ecommerce_metrics:

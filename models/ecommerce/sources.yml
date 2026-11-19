@@ -5,6 +5,10 @@ sources:
   schema: ecommerce_dw
   description: 现有 ODS 电商演示数据，只读源数据，不运行 seed。
   tables:
+  - name: ods_user_events
+    description: 用户行为事件，保留商品、用户和秒级事件时间。
+  - name: ods_inventory_daily
+    description: 每店铺、商品和自然日一条库存快照。
   # 售后金额由退款流水提供，每笔退款只读取一次。
   - name: ods_refunds
     description: 退款流水，refund_id 唯一，order_id 关联订单头。

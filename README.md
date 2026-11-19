@@ -4,7 +4,7 @@
 
 ## 数据来源与模型
 
-[源定义](models/ecommerce/sources.yml)声明六张 ODS 源表。订单、用户、商品和店铺的[语义定义](models/ecommerce/schema.yml)与退款、展示字典共同组成以下模型。
+[源定义](models/ecommerce/sources.yml)声明八张 ODS 源表。订单、用户、商品和店铺的[语义定义](models/ecommerce/schema.yml)与退款、展示字典共同组成以下模型。
 
 | 语义模型 | 数据源 | 粒度与关联 |
 | --- | --- | --- |
@@ -19,7 +19,7 @@
 
 订单头只补充下单日期、用户、店铺、状态和渠道，金额与件数只取明细。禁止把订单总额复制到明细后求和。
 
-另有一个非语义物理模型 `time_spine`，按五种业务日期的最小/最大值生成连续自然日。日期范围直接来自 ODS 映射后的业务模型，不依赖独立日期源表。日期偏移使用 StarRocks 的 [generate_series](https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/)（要求 StarRocks 3.1+），没有固定业务日期或 seed。
+另有一个非语义物理模型 `time_spine`，按订单、注册、商品、店铺、退款、库存及行为事件日期的最小/最大值生成连续自然日。日期范围直接来自 ODS 映射后的业务模型，不依赖独立日期源表。日期偏移使用 StarRocks 的 [generate_series](https://docs.starrocks.io/docs/sql-reference/sql-functions/table-functions/generate_series/)（要求 StarRocks 3.1+），没有固定业务日期或 seed。
 
 ## 指标口径
 
@@ -43,6 +43,40 @@
 | average_selling_price | 件均成交价 | 成交商品金额 ÷ 成交件数 |
 | selling_store_count | 动销店铺数 | 所选期间和商品范围内有成交的店铺去重数 |
 | successful_refund_amount | 成功退款金额 | 成功流水按 refunded_at 归属，金额单位元 |
+
+## 复杂经营资产
+
+订单模型提供三个可直接分组或筛选的表达式维度。 `order_item__item_value_band` 按单条明细应付额分为不足 100 元、100 至不足 500 元、500 元及以上三档；空值单列。`order_item__item_discount_band` 用明细优惠额和折前额区分无优惠、低于 20% 和至少 20% 的优惠；折前额非正或任一输入缺失时归入 unknown。`order_item__order_month__month` 按下单月分组。维度可以与商品类目、用户渠道或店铺省份组合。
+
+[经营指标定义](models/ecommerce/operating_metrics.yml)复用现有成交和退款指标。500 元、20% 和 10000 元是本组资产选用的分析阈值。
+
+| 指标 | 使用口径 |
+| --- | --- |
+| high_value_vs_deep_discount_sales_gap | 高额明细成交额减去深折明细成交额，两侧独立筛选。既高额又深折的明细同时进入两侧。 |
+| sales_above_target | 分组汇总成交额后取超过 10000 元的部分。按店铺、月查询时每个店月各用一次目标。 |
+| high_value_discounted_order_share | 有高额明细的成交订单中，有同一条明细同时满足高额和深折的订单占比。一个订单有多条符合条件的明细也只计一次。 |
+| refund_to_sales_amount_ratio | 按共同月份、店铺等维度分别汇总退款发生额与下单成交额再相除。以前月份的订单可在本月退款，比值可能超过 100%。 |
+| sales_mtd | 按 metric_time__day 查询当月累计成交额，跨月重置。 |
+| sales_wow_growth | 按 metric_time__week 对比前一自然周成交额，前周为零或缺失时返回 NULL。 |
+
+## 历史维度、窗口与快照
+
+[扩展语义模型](models/ecommerce/advanced_assets.yml)直接读取商品行为和库存，使用订单头金额为整单判档。以下分组与时间口径用于经营复盘。
+
+| 查询资产 | 粒度与边界 |
+| --- | --- |
+| high_spend_user_count | 在完整成交历史中按买家合计商品成交额，严格大于 1000 元入选。注册月份描述用户所属批次。 |
+| rolling_7d_buyers | 按 metric_time__day 查询，对当日及前六个自然日的成交买家一次去重。 |
+| registration_purchase_7d | 按注册时刻起算，在左闭右开的七天内首次下单且订单当前已成交，每位注册用户最多计一次。 |
+| same_product_purchase_7d | 分母为首次浏览的用户商品组合，分子为同一组合首次浏览起七天内购买的组合。按首次浏览月份归属，重复浏览和购买均不增加权重。 |
+| sales_amount × buyer_history__spend_stage | SCD II 按日初有无既往成交划分客户阶段。首购日全部成交归入首购前阶段，次日起归入回购买家阶段。原注册会员等级仍可独立分析。 |
+| period_closing_stock | 对统计期内有快照的每个店铺商品取最后一次 closing_quantity，再汇总；期内无观测的组合不参与。 |
+| completed_order_count × order_item__order_value_band | 按整单应付额扣除运费后分档。商品筛选只决定哪些订单入选。 |
+| confirmed_refund_to_sales_ratio | 按自然日关联两张事实表到日历，再按整个查询期间判定完整性。任一天未确认或期间成交额为零返回 NULL，已确认且有成交无退款返回 0。 |
+
+退款到齐区间由上游确认后通过 dbt 构建变量传入，例如 `--vars '{"refund_complete_from":"2024-01-01","refund_complete_through":"2024-01-31"}'`。两端均包含。默认所有日期为未知。此示例仅演示参数格式。漏斗按秒匹配，报表按日或更粗粒度查询；观察期最后七日的结果可能随新事件到来而变化。
+
+当前 dbt 1.12 构建通过 semantic_manifest 提供完整语义；OSI 转换器无法导出引用转化指标的派生表达式。StarRocks 服务渲染器需使用支持 UUID() 的版本才能执行原生漏斗。
 
 ## 月度区域经营与店铺复盘
 
@@ -112,11 +146,11 @@ if ($LASTEXITCODE -ne 0) { throw '电商模型构建失败' }
 if ($LASTEXITCODE -ne 0) { throw '电商指标验收失败' }
 ```
 
-构建包含 **7 个物理模型、50 项数据测试、6 个语义模型、18 个指标**。测试覆盖源主键/外键、明细唯一性、三个实体关系、金额/件数逐单对账、维表数量和时间骨架连续性。
+构建包含 **13 个物理模型、52 项数据测试、12 个语义模型、39 个指标（含两个内部分子匹配比率）**。测试覆盖源主键/外键、明细唯一性、三个实体关系、金额/件数逐单对账、维表数量和时间骨架连续性。
 
-验收脚本先检查实际 manifest，无 profile 时只检查模型/指标/无 seed 契约。提供 profile 后执行 18 组真实查询及对应 EXPLAIN SQL，与源表独立查询逐行比较：订单头总额、三个维表计数、非成交状态与零分母、商品类目品牌、用户会员、店铺省份、双省份路径、三维表组合、按月成交、原码筛选、2020 年注册月份和维值查询。金额允许浮点级误差，不放宽到业务金额差额。
+验收脚本先检查实际 manifest，无 profile 时只检查模型/指标/无 seed 契约。提供 profile 后执行 22 组真实查询及对应 EXPLAIN SQL，与源表独立查询逐行比较：订单头总额、三个维表计数、非成交状态与零分母、商品类目品牌、用户会员、店铺省份、双省份路径、三维表组合、按月成交、原码筛选、2020 年注册月份和维值查询。金额允许浮点级误差，不放宽到业务金额差额。
 
-原生 MetricFlow CLI 尚不支持 StarRocks 枚举；验收脚本使用与现有服务相同的 DuckDB SQL renderer 和 dbt-starrocks adapter，只验证这里实际执行的聚合/时间 SQL。脚本不导入相邻服务实现类。执行完成后可清理自己创建的临时目录；数据库验收 schema 由执行者按保留需求管理。
+原生 MetricFlow CLI 尚不支持 StarRocks 枚举；验收脚本使用与现有服务相同的 基于 DuckDB 的 SQL renderer（漏斗使用 StarRocks 的 UUID 函数）和 dbt-starrocks adapter，只验证这里实际执行的聚合/时间 SQL。脚本不导入相邻服务实现类。执行完成后可清理自己创建的临时目录；数据库验收 schema 由执行者按保留需求管理。
 
 ## 构建发布
 

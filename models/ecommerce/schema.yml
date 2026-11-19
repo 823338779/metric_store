@@ -6,6 +6,32 @@ models:
   semantic_model:
     enabled: true
   agg_time_dimension: order_date
+  derived_semantics:
+    entities:
+    - {name: buyer_history, type: foreign, expr: user_id}
+    dimensions:
+    - name: item_value_band
+      type: categorical
+      description: 单条商品明细折后应付额分档，边界为 100 元和 500 元。
+      expr: >-
+        case when item_paid_amount is null then 'unknown'
+             when item_paid_amount < 100 then 'under_100'
+             when item_paid_amount < 500 then '100_to_under_500'
+             else '500_plus' end
+    - name: item_discount_band
+      type: categorical
+      description: 按明细优惠额占折前额的比例分档，折前额非正或缺值时归入 unknown。
+      expr: >-
+        case when item_gross_amount is null or item_gross_amount <= 0
+                   or item_discount_amount is null then 'unknown'
+             when item_discount_amount <= 0 then 'no_discount'
+             when item_discount_amount < item_gross_amount * 0.2 then 'under_20pct'
+             else '20pct_plus' end
+    - name: order_month
+      type: time
+      granularity: month
+      description: 明细所属订单的下单月，取当月第一天。
+      expr: date_trunc('month', order_date)
   columns:
   - name: order_item_id
     description: 订单商品明细唯一标识；同一订单可以包含多条明细。
@@ -73,6 +99,9 @@ models:
     description: 明细商品件数，包含非成交状态；成交销量按标记过滤。
     data_tests:
     - not_null
+  - name: order_value_band
+    description: 整单应付商品额（扣运费）分档，可按商品切分成交订单数。
+    dimension: {type: categorical}
   - name: unit_price
     description: 下单时明细商品单价，单位元。
     data_tests:
@@ -182,6 +211,10 @@ models:
     description: 用户首次获客渠道。
     dimension:
       type: categorical
+  - name: registered_at
+    description: 用户实际注册时间，供七日转化窗口按秒匹配。
+    dimension: {type: time}
+    granularity: second
   metrics:
   - name: user_count
     label: 用户数
@@ -195,6 +228,19 @@ models:
     type: simple
     agg: count_distinct
     expr: user_id
+  - name: high_spend_user_count
+    label: 历史高消费用户数
+    description: 按用户累计成交额超过 1000 元筛选，再按用户注册批次计数。
+    type: simple
+    agg: count_distinct
+    expr: user_id
+    filter: "{{ Metric('sales_amount', group_by=['user']) }} > 1000"
+  - name: registration_events
+    label: 注册事件数
+    type: simple
+    agg: count
+    expr: user_id
+    agg_time_dimension: registered_at
 - name: products
   description: 商品语义模型：一行一个商品，类目、品牌来自 ODS 商品上架记录。
   semantic_model:
